@@ -1,5 +1,19 @@
 #include "applications.h"
 
+#include "framework/pm_api.h"
+
+static uint8_t key_has_activity(void)
+{
+    uint8_t i;
+
+    for (i = 0; i < KeyIndex_Max; i++) {
+        if (KEY_GetState((KeyIndex_t)i) != KeyState_None) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void button_task_func(void *pvParameters)
 {
     (void)pvParameters;
@@ -10,6 +24,11 @@ void button_task_func(void *pvParameters)
     for (;;) {
         Key_DebounceService_10ms();
         Key_Scand();
+
+        if (key_has_activity() != 0) {
+            pm_api_refresh_idle();
+        }
+
         if (KEY_GetDASClick(KeyIndex_NEXT) && btn < 1024) {
             btn += 8;
         }

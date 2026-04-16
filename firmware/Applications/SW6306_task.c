@@ -4,6 +4,8 @@
 
 #include "framework/pm_api.h"
 
+#include "at32f423_wk_config.h"
+
 #include <stdarg.h>
 
 static void usart_printf(const char *format, ...)

@@ -7,7 +7,7 @@ extern "C" {
 
 #include "buttons.h"
 #include "GC9D01.h"
-#include "SW6306.h"
+#include "sw6306.h"
 //#include "SC7A20.h"
 //#include "SD3078.h"
 

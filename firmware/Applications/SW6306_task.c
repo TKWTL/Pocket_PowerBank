@@ -2,6 +2,10 @@
 
 #include "at32f423_wk_config.h"
 
+#include "framework/pm_api.h"
+
+#include "at32f423_wk_config.h"
+
 #include <stdarg.h>
 
 static void usart_printf(const char *format, ...)
@@ -21,6 +25,22 @@ static void usart_printf(const char *format, ...)
         while (usart_flag_get(USART1, USART_TDBE_FLAG) == RESET) {
         }
         usart_data_transmit(USART1, buf[i]);
+    }
+}
+
+static void sw6306_update_sleep_block(void)
+{
+    uint8_t port_on;
+    uint8_t curr_busy;
+
+    port_on = (SW6306_IsPortC1ON() != 0 || SW6306_IsPortA1ON() != 0) ? 1 : 0;
+    curr_busy = (SW6306_ReadIBUS() > 50 || SW6306_ReadIBAT() > 50) ? 1 : 0;
+
+    if (port_on != 0 && curr_busy != 0) {
+        pm_api_set_sleep_block(PM_BLOCK_SW6306_LOAD, 1);
+        pm_api_refresh_idle();
+    } else {
+        pm_api_set_sleep_block(PM_BLOCK_SW6306_LOAD, 0);
     }
 }
 
@@ -45,13 +65,16 @@ void SW6306_task_func(void *pvParameters)
         SW6306_PortStatusLoad();
         vTaskDelay(200);
         SW6306_PowerLoad();
+        SW6306_CapacityLoad();
+
+        sw6306_update_sleep_block();
+
         if (i == 0) {
             usart_printf("VBUS:%dmV\tIBUS:%dmA\tPBUS:%.3fW\n", SW6306_ReadVBUS(), SW6306_ReadIBUS(), SW6306_ReadVBUS() * SW6306_ReadIBUS() * 0.000001f);
         }
         if (i == 1) {
             usart_printf("VBAT:%dmV\tIBAT:%dmA\tPBAT:%.3fW\n", SW6306_ReadVBAT(), SW6306_ReadIBAT(), SW6306_ReadVBAT() * SW6306_ReadIBAT() * 0.000001f);
         }
-        SW6306_CapacityLoad();
         if (i == 2) {
             usart_printf("TChip:%.1f'C\tCap:%d%%\n\n", SW6306_ReadTCHIP(), SW6306_ReadCapacity());
         }

@@ -57,7 +57,7 @@
 
 ## 4. 系统级睡眠倒计时 API
 
-`pm_sleep_timer` 提供：
+`pm_sleep_timer` 提供（当前默认超时 10s）：
 
 - `init(timeout)`：默认超时。
 - `refresh()`：有交互或关键事件时刷新。
@@ -85,6 +85,8 @@
 - `DEEPSLEEP`：中长时间待机。
 - `SLEEP_PENDING`：唤醒后短暂输入保护窗口。
 - `STANDBY`：运输模式或低压保护。
+
+当前实现中由 `powerdown_task` 直接调用 `pwc_deep_sleep_mode_enter()` 与 `pwc_standby_mode_enter()`。
 
 ## 6. 外设无感注册式电源管理
 

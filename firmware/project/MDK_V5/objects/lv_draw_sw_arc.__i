@@ -1,0 +1,8 @@
+-xc -std=c99 --target=arm-arm-none-eabi -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -c
+-fno-rtti -funsigned-char -fshort-enums -fshort-wchar
+-D__MICROLIB -gdwarf-4 -Os -ffunction-sections -Wno-packed -Wno-missing-variable-declarations -Wno-missing-prototypes -Wno-missing-noreturn -Wno-sign-conversion -Wno-nonportable-include-path -Wno-reserved-id-macro -Wno-unused-macros -Wno-documentation-unknown-command -Wno-documentation -Wno-license-management -Wno-parentheses-equality -Wno-reserved-identifier -I ../../libraries/drivers/inc -I ../../libraries/cmsis/cm4/core_support -I ../../libraries/cmsis/cm4/device_support -I ../inc -I ../../Bootstrap/inc -I ../../Drivers/GC9D01 -I ../../Drivers/SW6306 -I ../../Applications/LVGL -I ../../Applications/LVGL/porting -I ../../Applications/LVGL/src -I ../../Applications/LVGL/src/tick -I ../../Applications -I ../../Drivers/Buttons -I ../../middlewares/freertos/source/include -I ../../middlewares/freertos/source/portable/memmang -I ../../middlewares/freertos/source/portable/GCC/ARM_CM4F -I ../../middlewares/i2c_application_library -I ../../Applications/framework
+-IC:/Users/TKWTL/AppData/Local/Arm/Packs/ArteryTek/AT32F423_DFP/2.1.1/Device/Include
+-I"D:/Program Files/Keil_v5/ARM/CMSIS/Include"
+-IC:/Users/TKWTL/AppData/Local/Arm/Packs/ArteryTek/AT32F423_DFP/2.1.1
+-D__UVISION_VERSION="543" -DAT32F423KCU7_4 -DAT32F423KCU7_4 -DUSE_STDPERIPH_DRIVER -DAT_START_F423_V1 -DLV_LVGL_H_INCLUDE_SIMPLE -DLV_CONF_INCLUDE_SIMPLE
+-o ./objects/lv_draw_sw_arc.o -MMD "../../Applications/LVGL/src/draw/sw/lv_draw_sw_arc.c"

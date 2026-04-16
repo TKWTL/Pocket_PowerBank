@@ -53,11 +53,11 @@
           <CreateLib>0</CreateLib>
           <CreateHexFile>1</CreateHexFile>
           <DebugInformation>1</DebugInformation>
-          <BrowseInformation>0</BrowseInformation>
+          <BrowseInformation>1</BrowseInformation>
           <ListingPath>.\listings\</ListingPath>
           <HexFormatSelection>1</HexFormatSelection>
           <Merge32K>0</Merge32K>
-          <CreateBatchFile>0</CreateBatchFile>
+          <CreateBatchFile>1</CreateBatchFile>
           <BeforeCompile>
             <RunUserProg1>0</RunUserProg1>
             <RunUserProg2>0</RunUserProg2>
@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>AT32F423KCU7_4, USE_STDPERIPH_DRIVER, AT_START_F423_V1, LV_LVGL_H_INCLUDE_SIMPLE, LV_CONF_INCLUDE_SIMPLE</Define>
               <Undefine></Undefine>
-              <IncludePath>..\..\libraries\drivers\inc;..\..\libraries\cmsis\cm4\core_support;..\..\libraries\cmsis\cm4\device_support;..\inc;..\..\Bootstrap\inc;..\..\Drivers\GC9D01;..\..\Drivers\SW6306;..\..\Applications\LVGL;..\..\Applications\LVGL\porting;..\..\Applications\LVGL\src;..\..\Applications\LVGL\src\tick;..\..\Applications;..\..\Drivers\Buttons;../../middlewares/freertos/source/include;../../middlewares/freertos/source/portable/memmang;../../middlewares/freertos/source/portable/GCC/ARM_CM4F;../../middlewares/i2c_application_library</IncludePath>
+              <IncludePath>..\..\libraries\drivers\inc;..\..\libraries\cmsis\cm4\core_support;..\..\libraries\cmsis\cm4\device_support;..\inc;..\..\Bootstrap\inc;..\..\Drivers\GC9D01;..\..\Drivers\SW6306;..\..\Applications\LVGL;..\..\Applications\LVGL\porting;..\..\Applications\LVGL\src;..\..\Applications\LVGL\src\tick;..\..\Applications;..\..\Drivers\Buttons;../../middlewares/freertos/source/include;../../middlewares/freertos/source/portable/memmang;../../middlewares/freertos/source/portable/GCC/ARM_CM4F;../../middlewares/i2c_application_library;..\..\Applications\framework</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -2651,7 +2651,7 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>Applications</GroupName>
+          <GroupName>Tasks</GroupName>
           <Files>
             <File>
               <FileName>ui_task.c</FileName>
@@ -2722,6 +2722,36 @@
               <FileName>stream_buffer.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../middlewares/freertos/source/stream_buffer.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>services</GroupName>
+          <Files>
+            <File>
+              <FileName>pm_controller.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_controller.c</FilePath>
+            </File>
+            <File>
+              <FileName>pm_device.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_device.c</FilePath>
+            </File>
+            <File>
+              <FileName>pm_device_builtin.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_device_builtin.c</FilePath>
+            </File>
+            <File>
+              <FileName>pm_policy.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_policy.c</FilePath>
+            </File>
+            <File>
+              <FileName>pm_sleep_timer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_sleep_timer.c</FilePath>
             </File>
           </Files>
         </Group>

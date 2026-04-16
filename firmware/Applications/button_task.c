@@ -10,6 +10,9 @@ static uint8_t key_has_activity(void)
         if (KEY_GetState((KeyIndex_t)i) != KeyState_None) {
             return 1;
         }
+        if (Key_EdgeDetect((KeyIndex_t)i) != KeyEdge_Null) {
+            return 1;
+        }
     }
     return 0;
 }
@@ -31,12 +34,15 @@ void button_task_func(void *pvParameters)
 
         if (KEY_GetDASClick(KeyIndex_NEXT) && btn < 1024) {
             btn += 8;
+            pm_api_refresh_idle();
         }
         if (KEY_GetDASClick(KeyIndex_MENU) && btn > 0) {
             btn -= 8;
+            pm_api_refresh_idle();
         }
         if (KEY_GetDASClick(KeyIndex_CONF)) {
             i = i ? 0 : 1;
+            pm_api_refresh_idle();
         }
         if (i) {
             tmr_channel_value_set(TMR1, TMR_SELECT_CHANNEL_2, btn);

@@ -1,9 +1,0 @@
---cpu Cortex-M4.fp.sp -g --pd "__MICROLIB SETA 1" --diag_suppress=A1950W
--IC:\Users\TKWTL\AppData\Local\Arm\Packs\ArteryTek\AT32F423_DFP\2.1.1\Device\Include
--I"D:\Program Files\Keil_v5\ARM\CMSIS\Include"
--IC:\Users\TKWTL\AppData\Local\Arm\Packs\ArteryTek\AT32F423_DFP\2.1.1
---pd "__UVISION_VERSION SETA 543"
---pd "AT32F423KCU7_4 SETA 1"
---list .\listings\startup_at32f423.lst
---xref -o .\objects\startup_at32f423.o
---depend .\objects\startup_at32f423.d "startup_at32f423.s"

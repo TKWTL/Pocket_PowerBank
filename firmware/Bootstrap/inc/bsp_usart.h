@@ -1,29 +1,26 @@
-#ifndef __BSP_SPI_H__
-#define __BSP_SPI_H__
+#ifndef __BSP_USART_H__
+#define __BSP_USART_H__
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include "at32f423_wk_config.h"
-#include "wk_spi.h"
-#include "wk_dma.h"
-#include "wk_system.h"
-#include "freertos_app.h"
+#include <stdarg.h>
 
-#define GSPI    SPI3
-#define GSPI    SPI3
-#define GSPI_DMACH  DMA1_CHANNEL1
-#define GSPI_FDT_FLAG   DMA1_FDT1_FLAG
-#define GSPI    SPI3
-#define GSPI    SPI3
-#define GSPI    SPI3
-    
-void MX_SPI1_Init(void);
+/* 环形发送缓冲区大小（必须是 2 的幂） */
+#ifndef BSP_USART_TX_BUF_SIZE
+#define BSP_USART_TX_BUF_SIZE   128
+#endif
 
-//发送函数
-void GSPI_Transmit(uint8_t* p_buf, size_t len);
+#define DUART           USART1
+#define DUART_DMATX_CH  DMA1_CHANNEL6
+#define DUART_TX_FDT    DMA1_FDT6_FLAG
 
+void USART_SendByte(uint8_t data);
+void USART_SendString(const char *str);
+void USART_Printf(const char *format, ...);
+void USART_TxIRQHandler(void);
 
 #ifdef __cplusplus
 }

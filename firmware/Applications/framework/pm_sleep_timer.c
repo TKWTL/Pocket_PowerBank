@@ -5,15 +5,25 @@
 
 static TickType_t s_deadline;
 static uint32_t s_timeout_ms;
+static volatile uint8_t s_countdown_disabled;   /* 1=停止倒计时（不休眠）：expired 恒 0 */
+static volatile uint8_t s_force_sleep;          /* 1=立刻休眠：expired 恒 1；进入休眠分支后清除 */
 
 static TickType_t pm_to_ticks(uint32_t ms)
 {
-    return pdMS_TO_TICKS(ms);
+    /* 用 64 位中间值计算，防止 (ms*HZ/1000) 在 32 位下溢出：
+     * 如 0xFFFFFFFFms 经 pdMS_TO_TICKS 溢出后只剩约 71.6 分钟就“超时”。 */
+    uint64_t t = (uint64_t)ms * (uint64_t)configTICK_RATE_HZ / 1000ULL;
+    if (t > (uint64_t)0xFFFFFFFFUL) {
+        return (TickType_t)0xFFFFFFFFUL;   /* 饱和到 TickType_t 最大值 */
+    }
+    return (TickType_t)t;
 }
 
 void pm_sleep_timer_init(uint32_t timeout_ms)
 {
     s_timeout_ms = timeout_ms;
+    s_countdown_disabled = 0;
+    s_force_sleep = 0;
     s_deadline = xTaskGetTickCount() + pm_to_ticks(timeout_ms);
 }
 
@@ -21,13 +31,24 @@ void pm_sleep_timer_set(uint32_t timeout_ms)
 {
     taskENTER_CRITICAL();
     s_timeout_ms = timeout_ms;
+    s_countdown_disabled = 0;   /* 显式设置超时 → 恢复倒计时 */
     s_deadline = xTaskGetTickCount() + pm_to_ticks(timeout_ms);
+    taskEXIT_CRITICAL();
+}
+
+void pm_sleep_timer_disable(void)
+{
+    taskENTER_CRITICAL();
+    /* 关闭休眠只需阻止倒计时递减（expired 恒 0）：
+     * 不设极大超时值、不动 deadline——refresh 仍无条件重载，靠短路保证不超时。 */
+    s_countdown_disabled = 1;
     taskEXIT_CRITICAL();
 }
 
 void pm_sleep_timer_refresh(void)
 {
     taskENTER_CRITICAL();
+    /* 无条件重载倒计时：disabled 由 expired()/left_ms() 短路保证不超时，无需在此判断 */
     s_deadline = xTaskGetTickCount() + pm_to_ticks(s_timeout_ms);
     taskEXIT_CRITICAL();
 }
@@ -35,7 +56,14 @@ void pm_sleep_timer_refresh(void)
 void pm_sleep_timer_force_expire(void)
 {
     taskENTER_CRITICAL();
-    s_deadline = xTaskGetTickCount();
+    s_force_sleep = 1;          /* 立刻休眠（即使停止倒计时也生效）；进入休眠分支后清除 */
+    taskEXIT_CRITICAL();
+}
+
+void pm_sleep_timer_clear_force(void)
+{
+    taskENTER_CRITICAL();
+    s_force_sleep = 0;          /* 进入休眠分支后无条件清除 */
     taskEXIT_CRITICAL();
 }
 
@@ -43,6 +71,13 @@ uint32_t pm_sleep_timer_left_ms(void)
 {
     TickType_t now;
     TickType_t left;
+
+    if (s_force_sleep != 0) {
+        return 0;               /* 已被强制到期 */
+    }
+    if (s_countdown_disabled != 0) {
+        return PM_SLEEP_INFINITE;   /* 停止倒计时：剩余视为无限 */
+    }
 
     now = xTaskGetTickCount();
     if (now >= s_deadline) {
@@ -55,6 +90,16 @@ uint32_t pm_sleep_timer_left_ms(void)
 
 uint8_t pm_sleep_timer_expired(void)
 {
-    TickType_t now = xTaskGetTickCount();
-    return (now >= s_deadline) ? 1 : 0;
+    if (s_force_sleep != 0) {
+        return 1;               /* OR 条件：立刻休眠 */
+    }
+    if (s_countdown_disabled != 0) {
+        return 0;               /* 停止倒计时：永不超时 */
+    }
+    return (xTaskGetTickCount() >= s_deadline) ? 1 : 0;
+}
+
+uint8_t pm_sleep_timer_is_disabled(void)
+{
+    return (s_countdown_disabled != 0) ? 1 : 0;
 }

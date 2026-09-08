@@ -25,7 +25,7 @@ const KeyInfo_t KeyInfo_Array[KeyIndex_Max] = {
      * MultiClickTime：连击判定超时时间
      * ZeroIsPress低电平代表按下
      * GetIOFunc获取按键状态的uint8_t func(void)型函数名 */
-    {100, 20, 50, 1, KEY_NEXT_GetIO},
+    {100, 20, 50, 0, KEY_NEXT_GetIO},
     {100, 20, 50, 1, KEY_CONF_GetIO},
     {100, 20, 50, 1, KEY_PREV_GetIO},
 };
@@ -136,6 +136,14 @@ uint8_t KEY_GetDASClick(KeyIndex_t KeySelector) {
         return 1;
     }
     return 0;
+}
+
+/* 清除指定按键的边沿状态（消费 Rising/Holding 等边沿）。
+ * 用于 UI 层处理按键动作后立即清除，防止同一 Rising 被多次读取
+ * （无消费时：高频扫描双读跳格、低频扫描错过吞键）。长按 DAS 重复
+ * 由 State+DebounceCounter 驱动，清除 Edge 不影响它。 */
+void KEY_ClearEdge(KeyIndex_t KeySelector) {
+    KeyValue_Array[KeySelector].Edge = KeyEdge_Null;
 }
 
 /*指定按键当前的连击次数是否等于输入值

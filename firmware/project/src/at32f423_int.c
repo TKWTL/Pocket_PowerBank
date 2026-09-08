@@ -36,8 +36,11 @@ extern i2c_handle_type hi2c1;
 /* add user code begin private includes */
 #include "bsp_i2c.h"
 #include "bsp_spi.h"
+#include "bsp_usart.h"
 
 #include "lv_tick.h"
+
+#include "framework/pm_api.h"
 /* add user code end private includes */
 
 /* private typedef -----------------------------------------------------------*/
@@ -57,7 +60,8 @@ extern i2c_handle_type hi2c1;
 
 /* private variables ---------------------------------------------------------*/
 /* add user code begin private variables */
-
+/* 崩溃现场缓冲：放 .noinit 段（启动代码不清零），系统复位后保留；掉电复位则丢失 */
+__attribute__((section(".noinit"), used)) volatile hardfault_info_t g_hardfault;
 /* add user code end private variables */
 
 /* private function prototypes --------------------------------------------*/
@@ -67,7 +71,29 @@ extern i2c_handle_type hi2c1;
 
 /* private user code ---------------------------------------------------------*/
 /* add user code begin 0 */
+/* 保存 HardFault 现场（异常压栈帧：lr,pc,psr）到 g_hardfault（.noinit，复位后保留） */
+static void hardfault_capture(uint32_t *stack)
+{
+    g_hardfault.magic  = 0xFA17CA11UL;
+    g_hardfault.hfsr   = SCB->HFSR;
+    g_hardfault.cfsr   = SCB->CFSR;
+    g_hardfault.bfar   = SCB->BFAR;
+    g_hardfault.lr     = stack[5];
+    g_hardfault.pc     = stack[6];
+    g_hardfault.psr    = stack[7];
+    SCB->CFSR = 0xFFFFFFFFUL;   /* 清故障状态（写1清零） */
+    SCB->HFSR = 0xFFFFFFFFUL;
+}
 
+/* 四个故障处理器统一入口：捕获现场 + 复位（EXC_RETURN 必须在任何调用前读取） */
+#define FAULT_CAPTURE_AND_RESET()                          \
+    do {                                                   \
+        uint32_t _er, _sp;                                 \
+        __asm volatile("MOV %0, lr" : "=r"(_er));        \
+        _sp = (_er & 0x4UL) ? __get_PSP() : __get_MSP();   \
+        hardfault_capture((uint32_t *)_sp);                \
+        NVIC_SystemReset();                                \
+    } while (0)
 /* add user code end 0 */
 
 /* external variables ---------------------------------------------------------*/
@@ -99,8 +125,12 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* add user code begin HardFault_IRQ 0 */
-    //直接复位，避免死机
-    NVIC_SystemReset();
+    uint32_t exc_return;
+    uint32_t sp;
+    __asm volatile("MOV %0, lr" : "=r"(exc_return));  /* EXC_RETURN，须在调用前读取 */
+    sp = (exc_return & 0x4UL) ? __get_PSP() : __get_MSP();
+    hardfault_capture((uint32_t *)sp);  /* 保存崩溃现场到 RAM（复位后保留） */
+    NVIC_SystemReset();                 //直接复位，避免死机
   /* add user code end HardFault_IRQ 0 */
   /* go to infinite loop when hard fault exception occurs */
   while (1)
@@ -119,7 +149,7 @@ void HardFault_Handler(void)
 void MemManage_Handler(void)
 {
   /* add user code begin MemoryManagement_IRQ 0 */
-
+    FAULT_CAPTURE_AND_RESET();   /* 捕获现场后复位 */
   /* add user code end MemoryManagement_IRQ 0 */
   /* go to infinite loop when memory manage exception occurs */
   while (1)
@@ -138,8 +168,7 @@ void MemManage_Handler(void)
 void BusFault_Handler(void)
 {
   /* add user code begin BusFault_IRQ 0 */
-    //直接复位，避免死机
-    NVIC_SystemReset();
+    FAULT_CAPTURE_AND_RESET();   /* 捕获现场后复位 */
   /* add user code end BusFault_IRQ 0 */
   /* go to infinite loop when bus fault exception occurs */
   while (1)
@@ -158,8 +187,7 @@ void BusFault_Handler(void)
 void UsageFault_Handler(void)
 {
   /* add user code begin UsageFault_IRQ 0 */
-    //直接复位，避免死机
-    NVIC_SystemReset();
+    FAULT_CAPTURE_AND_RESET();   /* 捕获现场后复位 */
   /* add user code end UsageFault_IRQ 0 */
   /* go to infinite loop when usage fault exception occurs */
   while (1)
@@ -199,7 +227,6 @@ void SysTick_Handler(void)
     lv_tick_inc(1);
   /* add user code end SysTick_IRQ 0 */
 
-  wk_timebase_handler();
 #if (INCLUDE_xTaskGetSchedulerState == 1 )
   if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED)
   {
@@ -230,6 +257,12 @@ void EXINT0_IRQHandler(void)
     /* add user code begin EXINT_LINE_0 */
     /* clear flag */
     exint_flag_clear(EXINT_LINE_0);
+    /* 置数据刷新请求：按键唤醒同样先预取再亮屏（先查后显） */
+    pm_api_request_data_refresh();
+    /* 仅在睡眠时通知电源管理唤醒；运行中的按键由 button_task 轮询处理 */
+    if (pm_api_is_sleeping()) {
+        pm_api_refresh_idle();
+    }
     /* add user code end EXINT_LINE_0 */ 
   }
 
@@ -254,6 +287,12 @@ void EXINT1_IRQHandler(void)
     /* add user code begin EXINT_LINE_1 */
     /* clear flag */
     exint_flag_clear(EXINT_LINE_1);
+    /* 置数据刷新请求：按键唤醒同样先预取再亮屏（先查后显） */
+    pm_api_request_data_refresh();
+    /* 仅在睡眠时通知电源管理唤醒；运行中的按键由 button_task 轮询处理 */
+    if (pm_api_is_sleeping()) {
+        pm_api_refresh_idle();
+    }
     /* add user code end EXINT_LINE_1 */ 
   }
 
@@ -278,6 +317,12 @@ void EXINT2_IRQHandler(void)
     /* add user code begin EXINT_LINE_2 */
     /* clear flag */
     exint_flag_clear(EXINT_LINE_2);
+    /* 置数据刷新请求：按键唤醒同样先预取再亮屏（先查后显） */
+    pm_api_request_data_refresh();
+    /* 仅在睡眠时通知电源管理唤醒；运行中的按键由 button_task 轮询处理 */
+    if (pm_api_is_sleeping()) {
+        pm_api_refresh_idle();
+    }
     /* add user code end EXINT_LINE_2 */ 
   }
 
@@ -317,6 +362,38 @@ void DMA1_Channel1_IRQHandler(void)
 }
 
 /**
+  * @brief  this function handles DMA1 Channel 6 handler.
+  * @param  none
+  * @retval none
+  */
+void DMA1_Channel6_IRQHandler(void)
+{
+  /* add user code begin DMA1_Channel6_IRQ 0 */
+    USART_TxIRQHandler();
+  /* add user code end DMA1_Channel6_IRQ 0 */
+
+  /* add user code begin DMA1_Channel6_IRQ 1 */
+
+  /* add user code end DMA1_Channel6_IRQ 1 */
+}
+
+/**
+  * @brief  this function handles DMA1 Channel 7 handler.
+  * @param  none
+  * @retval none
+  */
+void DMA1_Channel7_IRQHandler(void)
+{
+  /* add user code begin DMA1_Channel7_IRQ 0 */
+
+  /* add user code end DMA1_Channel7_IRQ 0 */
+
+  /* add user code begin DMA1_Channel7_IRQ 1 */
+
+  /* add user code end DMA1_Channel7_IRQ 1 */
+}
+
+/**
   * @brief  this function handles EXINT Line [9:5] handler.
   * @param  none
   * @retval none
@@ -332,6 +409,13 @@ void EXINT9_5_IRQHandler(void)
     /* add user code begin EXINT_LINE_8 */
     /* clear flag */
     exint_flag_clear(EXINT_LINE_8);
+    /* 置数据刷新请求（单一 flag）：load_task 状态机检测后立即一轮完整读取，
+     * 兼顾睡眠唤醒预取（先查后显）与 RUN 态事件即时刷新 */
+    pm_api_request_data_refresh();
+    /* 仅在睡眠时通知电源管理唤醒；运行中的事件由 load_task 轮询处理 */
+    if (pm_api_is_sleeping()) {
+        pm_api_refresh_idle();
+    }
     /* add user code end EXINT_LINE_8 */ 
   }
 
@@ -388,6 +472,23 @@ void I2C1_ERR_IRQHandler(void)
     }
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
   /* add user code end I2C1_ERR_IRQ 1 */
+}
+
+/**
+  * @brief  this function handles TMR7 handler.
+  * @param  none
+  * @retval none
+  */
+void TMR7_GLOBAL_IRQHandler(void)
+{
+  /* add user code begin TMR7_GLOBAL_IRQ 0 */
+
+  /* add user code end TMR7_GLOBAL_IRQ 0 */
+
+  wk_timebase_handler();
+  /* add user code begin TMR7_GLOBAL_IRQ 1 */
+
+  /* add user code end TMR7_GLOBAL_IRQ 1 */
 }
 
 /* add user code begin 1 */

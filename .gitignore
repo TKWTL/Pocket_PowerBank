@@ -19,11 +19,12 @@
 *.uvguix.*
 *.mxproject
 *.tmp
- 
+*.code-workspace
+
 RTE/
 Templates/
 Examples/
- 
+
 !*.uvprojx
 !*.uvoptx
 !*.h
@@ -34,7 +35,13 @@ Examples/
 
 nul
 
-image/topology/
+.venv/
+.eide/
+.vscode/
+build/
+listings/
+objects/
+
 
 #JLINK file
 JLinkLog.txt

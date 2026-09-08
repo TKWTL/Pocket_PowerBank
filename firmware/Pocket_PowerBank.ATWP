@@ -84,7 +84,7 @@
     </SPI3>
     <SYSTEM>
         <Mode>
-            <ModeSub name="Time_Base" value="SysTick"/>
+            <ModeSub name="Time_Base" value="TMR7"/>
         </Mode>
         <Parameters>
             <ParametersSub name="Delay_Mode" value="Interrupt"/>
@@ -132,7 +132,7 @@
             <ParametersGroup>
                 <ParametersSub name="TaskName" value="ui_task"/>
                 <ParametersSub name="TaskPriority" value="14"/>
-                <ParametersSub name="TaskStackSize" value="768"/>
+                <ParametersSub name="TaskStackSize" value="1280"/>
                 <ParametersSub name="TaskEntryFunction" value="ui_task_func"/>
                 <ParametersSub name="TaskCodeGenerationOption" value="AsWeak"/>
                 <ParametersSub name="TaskParameters" value="NULL"/>
@@ -143,7 +143,7 @@
             <ParametersGroup>
                 <ParametersSub name="TaskName" value="powerdown_task"/>
                 <ParametersSub name="TaskPriority" value="15"/>
-                <ParametersSub name="TaskStackSize" value="128"/>
+                <ParametersSub name="TaskStackSize" value="256"/>
                 <ParametersSub name="TaskEntryFunction" value="powerdown_task_func"/>
                 <ParametersSub name="TaskCodeGenerationOption" value="AsWeak"/>
                 <ParametersSub name="TaskParameters" value="NULL"/>
@@ -154,7 +154,7 @@
             <ParametersGroup>
                 <ParametersSub name="TaskName" value="button_task"/>
                 <ParametersSub name="TaskPriority" value="15"/>
-                <ParametersSub name="TaskStackSize" value="64"/>
+                <ParametersSub name="TaskStackSize" value="128"/>
                 <ParametersSub name="TaskEntryFunction" value="button_task_func"/>
                 <ParametersSub name="TaskCodeGenerationOption" value="AsWeak"/>
                 <ParametersSub name="TaskParameters" value="NULL"/>
@@ -165,13 +165,24 @@
             <ParametersGroup>
                 <ParametersSub name="TaskName" value="SW6306_task"/>
                 <ParametersSub name="TaskPriority" value="14"/>
-                <ParametersSub name="TaskStackSize" value="128"/>
+                <ParametersSub name="TaskStackSize" value="256"/>
                 <ParametersSub name="TaskEntryFunction" value="SW6306_task_func"/>
                 <ParametersSub name="TaskCodeGenerationOption" value="AsWeak"/>
                 <ParametersSub name="TaskParameters" value="NULL"/>
                 <ParametersSub name="TaskAllocation" value="Static"/>
                 <ParametersSub name="TaskStackBuffer" value="my_task04_stack"/>
                 <ParametersSub name="TaskBuffer" value="my_task04_buffer"/>
+            </ParametersGroup>
+            <ParametersGroup>
+                <ParametersSub name="TaskName" value="Load_Task"/>
+                <ParametersSub name="TaskPriority" value="14"/>
+                <ParametersSub name="TaskStackSize" value="256"/>
+                <ParametersSub name="TaskEntryFunction" value="load_task"/>
+                <ParametersSub name="TaskCodeGenerationOption" value="AsWeak"/>
+                <ParametersSub name="TaskParameters" value="NULL"/>
+                <ParametersSub name="TaskAllocation" value="Static"/>
+                <ParametersSub name="TaskStackBuffer" value="my_task05_stack"/>
+                <ParametersSub name="TaskBuffer" value="my_task05_buffer"/>
             </ParametersGroup>
         </Tasks>
         <Mutexes>
@@ -243,8 +254,8 @@
         <DMA1_Channel1_IRQHandler>1;5;0;1;0</DMA1_Channel1_IRQHandler>
         <DMA1_Channel4_IRQHandler>0;5;0;1;0</DMA1_Channel4_IRQHandler>
         <DMA1_Channel5_IRQHandler>0;5;0;1;0</DMA1_Channel5_IRQHandler>
-        <DMA1_Channel6_IRQHandler>0;5;0;1;0</DMA1_Channel6_IRQHandler>
-        <DMA1_Channel7_IRQHandler>0;5;0;1;0</DMA1_Channel7_IRQHandler>
+        <DMA1_Channel6_IRQHandler>1;5;0;1;0</DMA1_Channel6_IRQHandler>
+        <DMA1_Channel7_IRQHandler>1;5;0;1;0</DMA1_Channel7_IRQHandler>
         <ADC1_IRQHandler>0;5;0;1;0</ADC1_IRQHandler>
         <EXINT9_5_IRQHandler>1;5;0;1;0</EXINT9_5_IRQHandler>
         <TMR1_BRK_TMR9_IRQHandler>0;5;0;1;0</TMR1_BRK_TMR9_IRQHandler>
@@ -261,6 +272,7 @@
     </NVIC>
     <GPIO>
         <Signal SignalName="EXINT0" PinName="PA0">
+            <Parameters name="GPIO_PullType_Set" value="GPIO_PULL_DOWN"/>
             <Parameters name="Label" value="NEXT"/>
         </Signal>
         <Signal SignalName="GPIO_Output" PinName="PA3">
@@ -378,7 +390,7 @@
     </PINInfo>
     <ProjectInfomation>
         <ProjectName>Pocket_PowerBank</ProjectName>
-        <ProjectLocation>E:/Embedded Full ENG Path/Pocket_PowerBank/firmware</ProjectLocation>
+        <ProjectLocation>E:/Embedded_Full_ENG_Path/Pocket_PowerBank/firmware</ProjectLocation>
         <ToolchainIDE>MDK_V5</ToolchainIDE>
         <ARMCompiler>1</ARMCompiler>
         <BackupCode>false</BackupCode>

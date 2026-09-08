@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>LVGL ASCII Glyph Pixel Editor</title>
+<style>
+:root{color-scheme:dark;--bg:#111318;--panel:#191c23;--panel2:#20242d;--line:#353b48;--text:#e8ebf0;--muted:#9aa3b2;--accent:#7aa2f7;--danger:#ff757f}
+*{box-sizing:border-box} body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden}
+button,input,select{font:inherit} button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer}button:hover{border-color:#667085}button.primary{background:#25375e;border-color:#4166a3}.danger{color:#ffb0b5}.muted{color:var(--muted)}
+#app{height:100vh;display:grid;grid-template-rows:auto auto 1fr auto}.top{display:flex;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}.toolbar{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);background:#151820;flex-wrap:wrap}.grow{flex:1}.filepick{position:relative;overflow:hidden}.filepick input{position:absolute;inset:0;opacity:0;cursor:pointer}.pill{padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted)}
+.main{min-height:0;display:grid;grid-template-columns:210px 1fr 260px}.side{min-height:0;overflow:auto;background:var(--panel);border-right:1px solid var(--line);padding:8px}.side.right{border-right:0;border-left:1px solid var(--line)}
+#glyphList{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}.glyphbtn{height:42px;padding:2px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:0}.glyphbtn b{font:16px ui-monospace,Consolas,monospace}.glyphbtn small{font-size:9px;color:var(--muted)}.glyphbtn.active{outline:2px solid var(--accent);border-color:transparent}.glyphbtn.changed small{color:#ffd580}
+.workspace{min-width:0;min-height:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:24px;background:#0d0f13}.canvasWrap{display:flex;flex-direction:column;align-items:center;gap:12px}.editorFrame{padding:10px;background:#d7d7d7;border-radius:8px;box-shadow:0 10px 30px #0008}.editorFrame canvas{display:block;image-rendering:pixelated;touch-action:none;cursor:crosshair}.previewBox{display:flex;gap:14px;align-items:center;background:var(--panel);border:1px solid var(--line);padding:10px;border-radius:8px}.previewBox canvas{background:white;image-rendering:pixelated;border:1px solid #555}
+.group{border-bottom:1px solid var(--line);padding:10px 2px}.group:last-child{border-bottom:0}.group h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px}.kv{display:grid;grid-template-columns:95px 1fr;gap:4px 8px}.kv code{font-family:ui-monospace,Consolas,monospace}.levels{display:flex;gap:5px;flex-wrap:wrap}.level{width:38px;height:32px;padding:0;position:relative}.level.active{outline:2px solid var(--accent)}.level span{position:absolute;inset:auto 2px 1px;font-size:9px;text-shadow:0 1px 2px #000;color:white}.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.row input[type=number]{width:72px;background:#101219;color:var(--text);border:1px solid var(--line);border-radius:5px;padding:5px}.row input[type=range]{width:120px}
+.grid9{display:grid;grid-template-columns:repeat(3,30px);gap:4px;margin-top:6px}.anchorBtn{width:30px;height:30px;padding:0}.anchorBtn.active{outline:2px solid var(--accent);border-color:transparent}.subtle{font-size:12px;color:var(--muted)}
+.status{padding:6px 12px;border-top:1px solid var(--line);background:var(--panel);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.drop{outline:2px dashed var(--accent);outline-offset:-6px}
+@media(max-width:900px){.main{grid-template-columns:160px 1fr}.side.right{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="top">
+    <label class="filepick"><button class="primary">打开 LVGL C / BDF</button><input id="fileInput" type="file" accept=".c,.h,.bdf,text/plain"></label>
+    <button id="exportBtn" disabled>导出修改后的 C</button>
+    <button id="resetBtn" disabled>恢复原文件</button>
+    <span id="fileName" class="pill">未加载</span><span class="grow"></span>
+    <span class="muted">LVGL C / 原生 BDF → glyph · 离线单文件</span>
+  </div>
+  <div class="toolbar">
+    <b id="charTitle">ASCII Glyph</b>
+    <button id="prevBtn" disabled>← 上一个</button><button id="nextBtn" disabled>下一个 →</button>
+    <span class="muted">缩放</span><select id="zoomSel"><option>12</option><option selected>20</option><option>28</option><option>36</option><option>48</option></select><span>px/像素</span>
+    <span class="grow"></span>
+    <button id="undoBtn" disabled>撤销 Ctrl+Z</button><button id="redoBtn" disabled>重做 Ctrl+Y</button>
+  </div>
+  <div class="main">
+    <aside class="side"><div class="group"><h3>Glyph 字符</h3><div id="glyphList"></div></div></aside>
+    <main class="workspace" id="workspace">
+      <div class="canvasWrap">
+        <div class="editorFrame"><canvas id="editor" width="1" height="1"></canvas></div>
+        <div class="previewBox"><div><b>1:1 预览</b><div class="muted">实际 glyph bitmap</div></div><canvas id="preview" width="1" height="1"></canvas><canvas id="preview4" width="1" height="1"></canvas></div>
+      </div>
+    </main>
+    <aside class="side right">
+      <div class="group"><h3>Glyph 信息</h3><div id="metrics" class="kv"><span>状态</span><code>未加载</code></div></div>
+      <div class="group"><h3>字形尺寸</h3>
+        <div class="row"><label>宽 <input id="glyphW" type="number" min="0" max="255" value="8"></label><label>高 <input id="glyphH" type="number" min="0" max="255" value="14"></label><button id="resizeOneBtn" disabled>应用到当前</button></div>
+        <div class="subtle">原像素在新 box 中的对齐位置：</div><div id="glyphAnchorGrid" class="grid9"></div>
+        <div class="row" style="margin-top:8px"><label>范围 <input id="rangeStart" type="text" value="0x20" style="width:68px"></label><span>–</span><input id="rangeEnd" type="text" value="0x7E" style="width:68px"><button id="resizeRangeBtn" disabled>应用范围</button><button id="resizeAllBtn" disabled>应用全部</button></div>
+        <p class="muted">修改 <code>box_w / box_h</code> 并按九宫格补空或裁剪；<code>ofs_x / ofs_y / adv_w</code> 保持不变。导出时自动重建全部 <code>bitmap_index</code>。</p>
+      </div>
+      <div class="group"><h3>画笔 Alpha</h3><div id="levels" class="levels"></div><p class="muted">左键：当前值　右键：0　Shift+左键：最大值</p></div>
+      <div class="group"><h3>抗锯齿处理</h3><div class="row"><label>阈值 <input id="threshold" type="number" min="0" max="255" value="128"></label><button id="binaryBtn" disabled>当前字形二值化</button></div><p class="muted">保持原 BPP，仅把像素量化为 0 / 最大值。字形尺寸改变后 bitmap_index 会在导出时自动重建。</p></div>
+      <div class="group"><h3>像素</h3><div id="hoverInfo" class="kv"><span>X/Y</span><code>—</code><span>Alpha</span><code>—</code></div></div>
+      <div class="group"><h3>BDF → LVGL Glyph</h3><div class="row"><label>目标 BPP <select id="bdfBpp"><option value="1" selected>1 bpp（关闭抗锯齿）</option><option value="2">2 bpp</option><option value="4">4 bpp</option><option value="8">8 bpp</option></select></label></div><p class="muted">可直接导入原生 BDF 点阵字体。读取 ASCII 32–126、DWIDTH、BBX 与 BITMAP 后转换成 LVGL glyph。默认 1 bpp；2/4/8 bpp 提供更多 Alpha 灰度级供手工编辑，但不会对原始 BDF 自动模糊或重采样。BDF 导出时仅将扩展名改为 <code>.c</code>，不添加后缀。</p></div>
+      <div class="group"><h3>限制</h3><p class="muted">LVGL C：适用于 lv_font_conv 的未压缩 bitmap_format=0、连续 cmap。BDF：当前读取 ENCODING 32–126；支持目标 1/2/4/8 bpp。1 bpp 为纯二值；更高 BPP 不自动生成灰边，只提供可手工编辑的 Alpha 级别。</p></div>
+    </aside>
+  </div>
+  <div class="status" id="status">拖入或选择 lv_font_conv C 文件，或原生 BDF 点阵字体。</div>
+</div>
+<script>
+'use strict';
+const $=s=>document.querySelector(s);
+const app=$('#app'), fileInput=$('#fileInput'), exportBtn=$('#exportBtn'), resetBtn=$('#resetBtn'), statusEl=$('#status');
+const glyphList=$('#glyphList'), editor=$('#editor'), preview=$('#preview'), preview4=$('#preview4'), ctx=editor.getContext('2d');
+const zoomSel=$('#zoomSel'), levelsEl=$('#levels'), metricsEl=$('#metrics'), hoverInfo=$('#hoverInfo');
+let sourceText='', sourceName='', font=null, selected=0, pixels=[], brush=255, drawing=false, strokeBefore=null, strokeChanged=false;
+let undoStack=[], redoStack=[];
+
+function status(s,bad=false){statusEl.textContent=s;statusEl.style.color=bad?'#ff9ea6':''}
+function scanNumericTokens(src){
+  const out=[]; let i=0, state='code';
+  while(i<src.length){
+    const c=src[i], n=src[i+1];
+    if(state==='code'){
+      if(c==='/'&&n==='*'){state='block';i+=2;continue} if(c==='/'&&n==='/'){state='line';i+=2;continue}
+      if(c==='"'){state='str';i++;continue} if(c==="'"){state='char';i++;continue}
+      const rest=src.slice(i); const m=/^(?:0[xX][0-9a-fA-F]+|\d+)/.exec(rest);
+      if(m){out.push({start:i,end:i+m[0].length,text:m[0],value:Number(m[0])});i+=m[0].length;continue}
+      i++;continue;
+    }
+    if(state==='block'){if(c==='*'&&n==='/'){state='code';i+=2}else i++;continue}
+    if(state==='line'){if(c==='\n'){state='code'}i++;continue}
+    if(state==='str'||state==='char'){if(c==='\\'){i+=2;continue} if((state==='str'&&c==='"')||(state==='char'&&c==="'")){state='code'}i++;continue}
+  } return out;
+}
+function findArray(text,name){
+  const re=new RegExp('\\b'+name.replace(/[.*+?^${}()|[\\]\\]/g,'\\$&')+'\\s*\\[\\s*\\]\\s*=\\s*\\{','m');
+  const m=re.exec(text); if(!m) throw new Error('找不到数组 '+name);
+  const open=text.indexOf('{',m.index); let i=open+1, depth=1, state='code';
+  while(i<text.length&&depth){const c=text[i],n=text[i+1];
+    if(state==='code'){if(c==='/'&&n==='*'){state='block';i+=2;continue}if(c==='/'&&n==='/'){state='line';i+=2;continue}if(c==='"'){state='str';i++;continue}if(c==="'"){state='char';i++;continue}if(c==='{')depth++;else if(c==='}')depth--;i++;continue}
+    if(state==='block'){if(c==='*'&&n==='/'){state='code';i+=2}else i++;continue}if(state==='line'){if(c==='\n')state='code';i++;continue}
+    if(state==='str'||state==='char'){if(c==='\\'){i+=2;continue}if((state==='str'&&c==='"')||(state==='char'&&c==="'"))state='code';i++;}
+  }
+  if(depth) throw new Error(name+' 数组大括号不完整');
+  const close=i-1, body=text.slice(open+1,close), toks=scanNumericTokens(body);
+  return {name,open,bodyStart:open+1,bodyEnd:close,body,tokens:toks,values:toks.map(t=>t.value&255)};
+}
+function parseGlyphDsc(text){
+  const arr=findArray(text,'glyph_dsc'), clean=arr.body.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/.*$/gm,'');
+  const entries=[]; for(const m of clean.matchAll(/\{([^{}]*)\}/g)){
+    const z=m[1], get=k=>{const q=new RegExp('\\.'+k+'\\s*=\\s*(-?\\d+)').exec(z);return q?Number(q[1]):null};
+    const d={bitmap_index:get('bitmap_index'),adv_w:get('adv_w'),box_w:get('box_w'),box_h:get('box_h'),ofs_x:get('ofs_x'),ofs_y:get('ofs_y')};
+    if(d.bitmap_index!==null) entries.push(d);
+  } if(entries.length<2) throw new Error('glyph_dsc 解析失败'); return {arr,entries};
+}
+function parseCInt(s){
+  if(s==null)return null;
+  const t=String(s).trim();
+  return /^0[xX]/.test(t)?parseInt(t,16):parseInt(t,10);
+}
+function parseCmaps(text){
+  const arr=findArray(text,'cmaps'), blocks=[];
+  for(const m of arr.body.matchAll(/\{([^{}]*)\}/g)){
+    const body=m[1];
+    const get=k=>{const q=new RegExp('\\.'+k+'\\s*=\\s*(0[xX][0-9a-fA-F]+|\\d+)').exec(body);return q?parseCInt(q[1]):null};
+    const rangeStart=get('range_start'), rangeLength=get('range_length'), glyphStart=get('glyph_id_start');
+    const typeM=/\.type\s*=\s*([A-Za-z0-9_]+)/.exec(body);
+    if(rangeStart===null||rangeLength===null||glyphStart===null)continue;
+    blocks.push({rangeStart,rangeLength,glyphStart,type:typeM?typeM[1]:'UNKNOWN'});
+  }
+  return blocks;
+}
+function decodeRawGlyph(bytes,g,bpp){
+  const n=Math.max(0,g.box_w*g.box_h),out=new Array(n).fill(0),mask=(1<<bpp)-1;
+  for(let p=0;p<n;p++){const bit=p*bpp,bi=g.bitmap_index+(bit>>3),sh=8-bpp-(bit&7),q=((bytes[bi]||0)>>sh)&mask;out[p]=Math.round(q*255/mask)}
+  return out;
+}
+function packAlphaPixels(data,bpp){
+  const mask=(1<<bpp)-1,out=new Uint8Array(Math.ceil(data.length*bpp/8));
+  for(let p=0;p<data.length;p++){const q=Math.max(0,Math.min(mask,Math.round(data[p]*mask/255))),bit=p*bpp,bi=bit>>3,sh=8-bpp-(bit&7);out[bi]|=(q<<sh)}
+  return Array.from(out);
+}
+function glyphState(g){return {box_w:g.box_w,box_h:g.box_h,pixels:g.pixels.slice(),changed:g.changed}}
+function restoreGlyphState(g,st){g.box_w=st.box_w;g.box_h=st.box_h;g.pixels=st.pixels.slice();g.changed=st.changed}
+function parseFont(text){
+  const bitmap=findArray(text,'glyph_bitmap'); const pd=parseGlyphDsc(text), dsc=pd.entries;
+  const bppM=/\.bpp\s*=\s*(\d+)/.exec(text); if(!bppM) throw new Error('找不到 font_dsc.bpp');
+  const bpp=Number(bppM[1]); if(![1,2,4,8].includes(bpp)) throw new Error('仅支持 1/2/4/8 bpp，当前='+bpp);
+  const fmt=/\.bitmap_format\s*=\s*(\d+)/.exec(text); if(fmt&&Number(fmt[1])!==0) throw new Error('仅支持未压缩 bitmap_format=0');
+  const cmaps=parseCmaps(text); if(!cmaps.length) throw new Error('没有识别到 cmap');
+  const rawBytes=Uint8Array.from(bitmap.values), records=dsc.map((d,gid)=>{
+    const r={gid,...d,changed:false}; r.pixels=decodeRawGlyph(rawBytes,r,bpp); r.original={box_w:r.box_w,box_h:r.box_h,pixels:r.pixels.slice(),adv_w:r.adv_w,ofs_x:r.ofs_x,ofs_y:r.ofs_y}; return r;
+  });
+  const glyphs=[],seen=new Set();
+  for(const cm of cmaps){
+    if(cm.type!=='LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY' && cm.type!=='LV_FONT_FMT_TXT_CMAP_FORMAT0_FULL') continue;
+    for(let ofs=0;ofs<cm.rangeLength;ofs++){
+      const cp=cm.rangeStart+ofs,gid=cm.glyphStart+ofs,r=records[gid]; if(!r||seen.has(cp))continue;
+      r.cp=cp;r.cmap=cm;glyphs.push(r);seen.add(cp);
+    }
+  }
+  glyphs.sort((a,b)=>a.cp-b.cp); if(!glyphs.length) throw new Error('当前 HTML 未从 cmap 中解析到可编辑 glyph');
+  recalcBitmapIndexes(records,bpp);
+  return {bitmap,dscArray:pd.arr,bpp,cmaps,glyphs,records};
+}
+function recalcBitmapIndexes(records,bpp){let idx=0;for(let gid=1;gid<records.length;gid++){records[gid].bitmap_index=idx;idx+=Math.ceil(records[gid].box_w*records[gid].box_h*bpp/8)}if(records[0])records[0].bitmap_index=0;return idx}
+function rebuildFontBytes(){recalcBitmapIndexes(font.records,font.bpp);const out=[];for(let gid=1;gid<font.records.length;gid++)out.push(...packAlphaPixels(font.records[gid].pixels,font.bpp));return out}
+function decodeGlyph(g){return g.pixels.slice()}
+function encodeGlyph(g,data){g.pixels=data.slice()}
+function quantize(a){const mask=(1<<font.bpp)-1;return Math.round(Math.max(0,Math.min(255,a))*mask/255)*255/mask}
+function escChar(cp){const c=String.fromCodePoint(cp); if(cp===32)return '␠';if(cp===9)return '⇥';return c}
+function renderList(){glyphList.innerHTML='';font.glyphs.forEach((g,i)=>{const b=document.createElement('button');b.className='glyphbtn'+(i===selected?' active':'')+(g.changed?' changed':'');b.innerHTML='<b></b><small></small>';b.querySelector('b').textContent=escChar(g.cp);b.querySelector('small').textContent='U+'+g.cp.toString(16).toUpperCase().padStart(4,'0');b.onclick=()=>selectGlyph(i);glyphList.appendChild(b)})}
+function selectGlyph(i){if(!font)return;selected=Math.max(0,Math.min(font.glyphs.length-1,i));const g=font.glyphs[selected];pixels=decodeGlyph(g);renderList();renderLevels();render();updateMetrics();syncSizeInputs();$('#charTitle').textContent=`${escChar(g.cp)}  U+${g.cp.toString(16).toUpperCase().padStart(4,'0')}`}
+function renderLevels(){levelsEl.innerHTML='';if(!font)return;const mask=(1<<font.bpp)-1;for(let q=0;q<=mask;q++){const a=Math.round(q*255/mask);const b=document.createElement('button');b.className='level'+(Math.round(brush)===a?' active':'');b.style.background=`rgb(${255-a},${255-a},${255-a})`;b.innerHTML=`<span>${a}</span>`;b.title=`量化值 ${q}/${mask}，Alpha ${a}`;b.onclick=()=>{brush=a;renderLevels()};levelsEl.appendChild(b)}}
+function render(){if(!font)return;const g=font.glyphs[selected],z=+zoomSel.value;if(!g.box_w||!g.box_h){editor.width=200;editor.height=80;ctx.fillStyle='#eee';ctx.fillRect(0,0,editor.width,editor.height);ctx.fillStyle='#555';ctx.font='14px sans-serif';ctx.fillText('空白 glyph，无 bitmap 像素',18,42);preview.width=1;preview.height=1;preview4.width=4;preview4.height=4;return}
+  editor.width=g.box_w*z+1;editor.height=g.box_h*z+1;ctx.fillStyle='#fff';ctx.fillRect(0,0,editor.width,editor.height);
+  for(let y=0;y<g.box_h;y++)for(let x=0;x<g.box_w;x++){const a=Math.round(pixels[y*g.box_w+x]),v=255-a;ctx.fillStyle=`rgb(${v},${v},${v})`;ctx.fillRect(x*z,y*z,z,z)}
+  ctx.strokeStyle='rgba(30,30,30,.28)';ctx.lineWidth=1;ctx.beginPath();for(let x=0;x<=g.box_w;x++){ctx.moveTo(x*z+.5,.5);ctx.lineTo(x*z+.5,g.box_h*z+.5)}for(let y=0;y<=g.box_h;y++){ctx.moveTo(.5,y*z+.5);ctx.lineTo(g.box_w*z+.5,y*z+.5)}ctx.stroke();
+  drawPreview(preview,1);drawPreview(preview4,4);
+}
+function drawPreview(can,scale){const g=font.glyphs[selected];can.width=Math.max(1,g.box_w*scale);can.height=Math.max(1,g.box_h*scale);const c=can.getContext('2d');c.fillStyle='#fff';c.fillRect(0,0,can.width,can.height);for(let y=0;y<g.box_h;y++)for(let x=0;x<g.box_w;x++){const a=pixels[y*g.box_w+x]/255;c.fillStyle=`rgba(0,0,0,${a})`;c.fillRect(x*scale,y*scale,scale,scale)}}
+function updateMetrics(){const g=font.glyphs[selected];metricsEl.innerHTML=`<span>字符</span><code>${escChar(g.cp)} / U+${g.cp.toString(16).toUpperCase().padStart(4,'0')}</code><span>Glyph ID</span><code>${g.gid}</code><span>BPP</span><code>${font.bpp}</code><span>bitmap_index</span><code>${g.bitmap_index}</code><span>box</span><code>${g.box_w} × ${g.box_h}</code><span>offset</span><code>${g.ofs_x}, ${g.ofs_y}</code><span>adv_w</span><code>${g.adv_w}</code>`}
+function posFromEvent(e){const g=font.glyphs[selected],r=editor.getBoundingClientRect(),z=+zoomSel.value;const x=Math.floor((e.clientX-r.left)*editor.width/r.width/z),y=Math.floor((e.clientY-r.top)*editor.height/r.height/z);return{x,y,ok:x>=0&&y>=0&&x<g.box_w&&y<g.box_h}}
+function setPixelAt(e){const p=posFromEvent(e),g=font.glyphs[selected];if(!p.ok)return;let a=e.buttons===2||e.button===2?0:(e.shiftKey?255:brush);a=quantize(a);const idx=p.y*g.box_w+p.x;if(Math.round(pixels[idx])!==Math.round(a)){pixels[idx]=a;encodeGlyph(g,pixels);g.changed=true;strokeChanged=true;render();renderList()}hoverInfo.innerHTML=`<span>X/Y</span><code>${p.x}, ${p.y}</code><span>Alpha</span><code>${Math.round(pixels[idx])}</code>`}
+editor.addEventListener('contextmenu',e=>e.preventDefault());editor.addEventListener('pointerdown',e=>{if(!font)return;e.preventDefault();drawing=true;strokeBefore=pixels.slice();strokeChanged=false;editor.setPointerCapture(e.pointerId);setPixelAt(e)});editor.addEventListener('pointermove',e=>{if(!font)return;const p=posFromEvent(e),g=font.glyphs[selected];if(p.ok){const a=pixels[p.y*g.box_w+p.x];hoverInfo.innerHTML=`<span>X/Y</span><code>${p.x}, ${p.y}</code><span>Alpha</span><code>${Math.round(a)}</code>`}if(drawing)setPixelAt(e)});editor.addEventListener('pointerup',e=>{if(!drawing)return;drawing=false;if(strokeChanged){undoStack.push({idx:selected,before:strokeBefore,after:pixels.slice()});redoStack=[];updateUndoButtons()}strokeBefore=null});
+function applyHistory(entry,which){
+  if(entry.kind==='multi'){
+    for(const ch of entry.changes){const g=font.glyphs[ch.idx];restoreGlyphState(g,ch[which]);g.changed=!sameGlyphToOriginal(g)}
+    selected=entry.selected;const sg=font.glyphs[selected];pixels=sg.pixels.slice();recalcBitmapIndexes(font.records,font.bpp);renderList();render();updateMetrics();syncSizeInputs();return;
+  }
+  selected=entry.idx;const g=font.glyphs[selected];
+  if(Array.isArray(entry[which])){g.pixels=entry[which].slice()}else restoreGlyphState(g,entry[which]);
+  pixels=g.pixels.slice();g.changed=!sameGlyphToOriginal(g);recalcBitmapIndexes(font.records,font.bpp);renderList();render();updateMetrics();syncSizeInputs();
+}
+function sameGlyphToOriginal(g){const o=g.original;if(!o||g.box_w!==o.box_w||g.box_h!==o.box_h||g.pixels.length!==o.pixels.length)return false;for(let i=0;i<g.pixels.length;i++)if(Math.round(g.pixels[i])!==Math.round(o.pixels[i]))return false;return true}
+function undo(){const e=undoStack.pop();if(!e)return;applyHistory(e,'before');redoStack.push(e);updateUndoButtons()}
+function redo(){const e=redoStack.pop();if(!e)return;applyHistory(e,'after');undoStack.push(e);updateUndoButtons()}
+function updateUndoButtons(){$('#undoBtn').disabled=!undoStack.length;$('#redoBtn').disabled=!redoStack.length}
+function binaryCurrent(){if(!font)return;const t=Math.max(0,Math.min(255,+$('#threshold').value||0)),before=pixels.slice();pixels=pixels.map(v=>v>=t?255:0);const g=font.glyphs[selected];encodeGlyph(g,pixels);g.changed=!sameGlyphToOriginal(g);undoStack.push({idx:selected,before,after:pixels.slice()});redoStack=[];updateUndoButtons();renderList();render()}
+function replaceBody(text,arr,newBody){return text.slice(0,arr.bodyStart)+newBody+text.slice(arr.bodyEnd)}
+function cHexArray(vals,indent='    ',perLine=16){if(!vals.length)return '\n';const lines=[];for(let i=0;i<vals.length;i+=perLine)lines.push(indent+vals.slice(i,i+perLine).map(v=>'0x'+v.toString(16).toUpperCase().padStart(2,'0')).join(', ')+',');return '\n'+lines.join('\n')+'\n'}
+function glyphDscBody(){const lines=[];for(let gid=0;gid<font.records.length;gid++){const g=font.records[gid];let tail=gid===0?' /* id = 0 reserved */':'';if(g.cp!=null)tail+=` /* U+${g.cp.toString(16).toUpperCase().padStart(4,'0')} "${escChar(g.cp).replace(/"/g,'\\"')}" */`;lines.push(`    {.bitmap_index = ${g.bitmap_index}, .adv_w = ${g.adv_w}, .box_w = ${g.box_w}, .box_h = ${g.box_h}, .ofs_x = ${g.ofs_x}, .ofs_y = ${g.ofs_y}}${tail},`)}return '\n'+lines.join('\n')+'\n'}
+function download(name,text){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)}
+function exportC(){try{const bytes=rebuildFontBytes(),edits=[{arr:font.bitmap,body:cHexArray(bytes)},{arr:font.dscArray,body:glyphDscBody()}].sort((a,b)=>b.arr.bodyStart-a.arr.bodyStart);let out=sourceText;for(const e of edits)out=replaceBody(out,e.arr,e.body);download(sourceName,out);status('已导出；文件名保持不变。glyph_bitmap、box_w/box_h 与全部 bitmap_index 已按当前字形尺寸重建。')}catch(e){status(e.message,true)}}
+
+let glyphAnchor='cc';
+function buildGlyphAnchorGrid(){const lab={tl:'↖',tc:'↑',tr:'↗',cl:'←',cc:'•',cr:'→',bl:'↙',bc:'↓',br:'↘'},box=$('#glyphAnchorGrid');box.innerHTML='';for(const a of ['tl','tc','tr','cl','cc','cr','bl','bc','br']){const b=document.createElement('button');b.className='anchorBtn'+(a===glyphAnchor?' active':'');b.textContent=lab[a];b.title=a.toUpperCase();b.onclick=()=>{glyphAnchor=a;buildGlyphAnchorGrid()};box.appendChild(b)}}
+function syncSizeInputs(){if(!font)return;const g=font.glyphs[selected];$('#glyphW').value=g.box_w;$('#glyphH').value=g.box_h}
+function parseCodePointInput(v){const t=String(v).trim();if(/^U\+/i.test(t))return parseInt(t.slice(2),16);if(/^0x/i.test(t))return parseInt(t,16);if(/^\d+$/.test(t))return parseInt(t,10);if([...t].length===1)return t.codePointAt(0);return NaN}
+function resizePixelGrid(oldPixels,ow,oh,nw,nh,a){const out=new Array(nw*nh).fill(0);const hx=a[1]==='l'?0:a[1]==='c'?Math.floor((nw-ow)/2):(nw-ow),vy=a[0]==='t'?0:a[0]==='c'?Math.floor((nh-oh)/2):(nh-oh);for(let y=0;y<oh;y++)for(let x=0;x<ow;x++){const nx=x+hx,ny=y+vy;if(nx>=0&&ny>=0&&nx<nw&&ny<nh)out[ny*nw+nx]=oldPixels[y*ow+x]}return out}
+function resizeGlyphAt(idx,nw,nh){const g=font.glyphs[idx],before=glyphState(g);nw=Math.max(0,Math.min(255,Math.round(nw)));nh=Math.max(0,Math.min(255,Math.round(nh)));g.pixels=resizePixelGrid(g.pixels,g.box_w,g.box_h,nw,nh,glyphAnchor);g.box_w=nw;g.box_h=nh;g.changed=!sameGlyphToOriginal(g);return {idx,before,after:glyphState(g)}}
+function afterResize(changes,msg){recalcBitmapIndexes(font.records,font.bpp);undoStack.push({kind:'multi',changes,selected});redoStack=[];updateUndoButtons();pixels=font.glyphs[selected].pixels.slice();renderList();render();updateMetrics();syncSizeInputs();status(msg)}
+function resizeCurrent(){if(!font)return;const w=+$('#glyphW').value,h=+$('#glyphH').value;afterResize([resizeGlyphAt(selected,w,h)],`已调整 ${escChar(font.glyphs[selected].cp)} 为 ${Math.round(w)}×${Math.round(h)}。`)}
+function resizeRange(all=false){if(!font)return;const w=+$('#glyphW').value,h=+$('#glyphH').value;let targets=font.glyphs.map((g,i)=>i);if(!all){const a=parseCodePointInput($('#rangeStart').value),b=parseCodePointInput($('#rangeEnd').value);if(!Number.isFinite(a)||!Number.isFinite(b)){status('Unicode 范围无效，可输入 0x20、U+0020、32 或单个字符。',true);return}const lo=Math.min(a,b),hi=Math.max(a,b);targets=targets.filter(i=>font.glyphs[i].cp>=lo&&font.glyphs[i].cp<=hi)}if(!targets.length){status('指定范围内没有 glyph。',true);return}const changes=targets.map(i=>resizeGlyphAt(i,w,h));afterResize(changes,`已批量调整 ${targets.length} 个 glyph 为 ${Math.round(w)}×${Math.round(h)}。`)}
+function sanitizeCName(s){let n=(s||'bitmap_font').replace(/\.[^.]+$/,'').replace(/[^A-Za-z0-9_]/g,'_');if(!/^[A-Za-z_]/.test(n))n='font_'+n;return n}
+function bdfGlyphPixels(hexRows,w,h){
+  const out=new Array(w*h).fill(0), rowBytes=Math.ceil(w/8);
+  for(let y=0;y<h;y++){
+    let row=(hexRows[y]||'').replace(/\s+/g,'').padEnd(rowBytes*2,'0');
+    const bytes=[];for(let i=0;i<rowBytes;i++)bytes.push(parseInt(row.slice(i*2,i*2+2),16)||0);
+    for(let x=0;x<w;x++)out[y*w+x]=(bytes[x>>3]>>(7-(x&7)))&1;
+  }
+  return out;
+}
+function packGlyphBpp(bits,bpp){
+  const mask=(1<<bpp)-1, out=new Uint8Array(Math.ceil(bits.length*bpp/8));
+  for(let i=0;i<bits.length;i++){
+    const q=bits[i]?mask:0, bit=i*bpp, bi=bit>>3, sh=8-bpp-(bit&7);
+    out[bi]|=(q<<sh);
+  }
+  return Array.from(out);
+}
+function parseBDF(text){
+  if(!/^STARTFONT\b/m.test(text))throw new Error('不是 BDF 字体文件');
+  const fb=/^FONTBOUNDINGBOX\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)/m.exec(text);
+  const size=/^SIZE\s+(\d+)/m.exec(text);
+  const defaultD=/^DWIDTH\s+(\d+)\s+(-?\d+)/m.exec(text);
+  const lineHeight=fb?Math.max(1,+fb[2]):(size?+size[1]:14);
+  const baseLine=fb?Math.max(0,-(+fb[4])):0;
+  const glyphMap=new Map();
+  const blocks=text.split(/^STARTCHAR\s+/m).slice(1);
+  for(const block of blocks){
+    const enc=/^ENCODING\s+(-?\d+)/m.exec(block);if(!enc)continue;const cp=+enc[1];if(cp<32||cp>126)continue;
+    const dw=/^DWIDTH\s+(-?\d+)\s+(-?\d+)/m.exec(block);
+    const bb=/^BBX\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)/m.exec(block);
+    const bm=/^BITMAP\s*\n([\s\S]*?)^ENDCHAR/m.exec(block);
+    const adv=dw?+dw[1]:(defaultD?+defaultD[1]:(fb?+fb[1]:8));
+    let w=0,h=0,xoff=0,yoff=0,rows=[];
+    if(bb){w=Math.max(0,+bb[1]);h=Math.max(0,+bb[2]);xoff=+bb[3];yoff=+bb[4]}
+    if(bm)rows=bm[1].trim().split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    glyphMap.set(cp,{cp,adv,w,h,xoff,yoff,bits:bdfGlyphPixels(rows,w,h)});
+  }
+  return {lineHeight,baseLine,glyphMap,cellW:fb?+fb[1]:(defaultD?+defaultD[1]:8)};
+}
+function cHexBytes(vals,indent='    ',perLine=16){
+  if(!vals.length)return '';
+  const lines=[];for(let i=0;i<vals.length;i+=perLine){lines.push(indent+vals.slice(i,i+perLine).map(v=>'0x'+v.toString(16).toUpperCase().padStart(2,'0')).join(', ')+',')}
+  return lines.join('\n');
+}
+function bdfToLvglC(text,inputName,targetBpp=1){
+  targetBpp=Number(targetBpp); if(![1,2,4,8].includes(targetBpp)) targetBpp=1;
+  const b=parseBDF(text), base=sanitizeCName(inputName), symbol='lv_font_'+base;
+  const bitmap=[],dsc=[];dsc.push({bitmap_index:0,adv_w:0,box_w:0,box_h:0,ofs_x:0,ofs_y:0,cp:null});
+  let missing=0;
+  for(let cp=32;cp<=126;cp++){
+    const g=b.glyphMap.get(cp); const idx=bitmap.length;
+    if(!g){missing++;dsc.push({bitmap_index:idx,adv_w:b.cellW*16,box_w:0,box_h:0,ofs_x:0,ofs_y:0,cp});continue}
+    bitmap.push(...packGlyphBpp(g.bits,targetBpp));
+    dsc.push({bitmap_index:idx,adv_w:Math.max(0,Math.round(g.adv*16)),box_w:g.w,box_h:g.h,ofs_x:g.xoff,ofs_y:g.yoff,cp});
+  }
+  const glyphComments=[]; let bytePos=0;
+  for(let cp=32;cp<=126;cp++){
+    const d=dsc[cp-31], next=(cp<126?dsc[cp-30].bitmap_index:bitmap.length), bytes=bitmap.slice(d.bitmap_index,next);
+    const shown=cp===32?' ':String.fromCharCode(cp).replace(/\\/g,'\\\\').replace(/"/g,'\\"');
+    glyphComments.push(`    /* U+${cp.toString(16).toUpperCase().padStart(4,'0')} "${shown}" */`);
+    if(bytes.length)glyphComments.push(cHexBytes(bytes,'    ',16));
+    glyphComments.push('');
+    bytePos=next;
+  }
+  const dscLines=dsc.map((d,i)=>`    {.bitmap_index = ${d.bitmap_index}, .adv_w = ${d.adv_w}, .box_w = ${d.box_w}, .box_h = ${d.box_h}, .ofs_x = ${d.ofs_x}, .ofs_y = ${d.ofs_y}}${i===0?' /* id = 0 reserved */':''},`).join('\n');
+  const guard=symbol.toUpperCase();
+  const out=`/*******************************************************************************\n * Converted from native BDF bitmap font\n * ASCII: 32-126\n * Bpp: ${targetBpp}\n * Native BDF pixels preserved; higher BPP only enables manual alpha levels\n *******************************************************************************/\n\n#ifdef __has_include\n    #if __has_include("lvgl.h")\n        #ifndef LV_LVGL_H_INCLUDE_SIMPLE\n            #define LV_LVGL_H_INCLUDE_SIMPLE\n        #endif\n    #endif\n#endif\n\n#ifdef LV_LVGL_H_INCLUDE_SIMPLE\n    #include "lvgl.h"\n#else\n    #include "lvgl/lvgl.h"\n#endif\n\n#ifndef ${guard}\n#define ${guard} 1\n#endif\n\n#if ${guard}\n\nstatic LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {\n${glyphComments.join('\n')}\n};\n\nstatic const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {\n${dscLines}\n};\n\nstatic const lv_font_fmt_txt_cmap_t cmaps[] =\n{\n    {\n        .range_start = 32, .range_length = 95, .glyph_id_start = 1,\n        .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0, .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY\n    }\n};\n\n#if LVGL_VERSION_MAJOR == 8\nstatic lv_font_fmt_txt_glyph_cache_t cache;\n#endif\n\n#if LVGL_VERSION_MAJOR >= 8\nstatic const lv_font_fmt_txt_dsc_t font_dsc = {\n#else\nstatic lv_font_fmt_txt_dsc_t font_dsc = {\n#endif\n    .glyph_bitmap = glyph_bitmap,\n    .glyph_dsc = glyph_dsc,\n    .cmaps = cmaps,\n    .kern_dsc = NULL,\n    .kern_scale = 0,\n    .cmap_num = 1,\n    .bpp = ${targetBpp},\n    .kern_classes = 0,\n    .bitmap_format = 0,\n#if LVGL_VERSION_MAJOR == 8\n    .cache = &cache\n#endif\n};\n\n#if LVGL_VERSION_MAJOR >= 8\nconst lv_font_t ${symbol} = {\n#else\nlv_font_t ${symbol} = {\n#endif\n    .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt,\n    .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,\n    .line_height = ${b.lineHeight},\n    .base_line = ${b.baseLine},\n#if !(LVGL_VERSION_MAJOR == 6 && LVGL_VERSION_MINOR == 0)\n    .subpx = LV_FONT_SUBPX_NONE,\n#endif\n#if LV_VERSION_CHECK(7, 4, 0) || LVGL_VERSION_MAJOR >= 8\n    .underline_position = -2,\n    .underline_thickness = 1,\n#endif\n    .static_bitmap = 0,\n    .dsc = &font_dsc,\n#if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9\n    .fallback = NULL,\n#endif\n    .user_data = NULL,\n};\n\n#endif /* ${guard} */\n`;
+  return {text:out,outputName:(inputName||'bitmap_font.bdf').replace(/\.[^.]+$/,'.c'),missing,symbol};
+}
+function loadAnyText(text,name){
+  const isBdf=/^STARTFONT\b/m.test(text)||/\.bdf$/i.test(name||'');
+  if(isBdf){
+    try{const targetBpp=Number($('#bdfBpp').value)||1;const r=bdfToLvglC(text,name,targetBpp);loadText(r.text,r.outputName);status(`BDF 转换成功：ASCII 32–126 → LVGL ${targetBpp} bpp glyph；${targetBpp===1?'抗锯齿关闭；':'已启用 '+targetBpp+' bpp Alpha 级别（原 BDF 像素仍保持硬边）；'}${r.missing?`缺少 ${r.missing} 个 ASCII 字符，已留空；`:''}导出文件 ${r.outputName}。`)}catch(e){console.error(e);status('BDF 转换失败：'+e.message,true)}
+  }else loadText(text,name);
+}
+
+function loadText(text,name){try{const f=parseFont(text);sourceText=text;sourceName=name||'font.c';font=f;selected=0;undoStack=[];redoStack=[];brush=255;$('#fileName').textContent=sourceName;exportBtn.disabled=resetBtn.disabled=$('#prevBtn').disabled=$('#nextBtn').disabled=$('#binaryBtn').disabled=$('#resizeOneBtn').disabled=$('#resizeRangeBtn').disabled=$('#resizeAllBtn').disabled=false;updateUndoButtons();selectGlyph(Math.max(0,f.glyphs.findIndex(g=>g.cp===65)));status(`加载成功：glyph ${f.glyphs.length} 个，${f.bpp} bpp，${f.cmaps.length} 个 cmap，bitmap ${rebuildFontBytes().length} bytes。`)}catch(e){console.error(e);status('解析失败：'+e.message,true)}}
+fileInput.onchange=async()=>{const f=fileInput.files[0];if(f)loadAnyText(await f.text(),f.name)};exportBtn.onclick=exportC;resetBtn.onclick=()=>sourceText&&loadText(sourceText,sourceName);zoomSel.onchange=render;$('#prevBtn').onclick=()=>selectGlyph(selected-1);$('#nextBtn').onclick=()=>selectGlyph(selected+1);$('#undoBtn').onclick=undo;$('#redoBtn').onclick=redo;$('#binaryBtn').onclick=binaryCurrent;$('#resizeOneBtn').onclick=resizeCurrent;$('#resizeRangeBtn').onclick=()=>resizeRange(false);$('#resizeAllBtn').onclick=()=>resizeRange(true);buildGlyphAnchorGrid();
+window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo()}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();redo()}else if(e.key==='ArrowLeft'&&font){selectGlyph(selected-1)}else if(e.key==='ArrowRight'&&font){selectGlyph(selected+1)}});
+for(const ev of ['dragenter','dragover'])app.addEventListener(ev,e=>{e.preventDefault();app.classList.add('drop')});for(const ev of ['dragleave','drop'])app.addEventListener(ev,e=>{e.preventDefault();app.classList.remove('drop')});app.addEventListener('drop',async e=>{const f=e.dataTransfer.files[0];if(f)loadAnyText(await f.text(),f.name)});
+</script>
+</body>
+</html>

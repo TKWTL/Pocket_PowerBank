@@ -72,6 +72,7 @@ typedef enum {
     extern KeyEdge_t Key_EdgeDetect(KeyIndex_t KeySelector);                    //按键边沿检测，读取它不会改变已有状态
     extern KeyState_t KEY_GetState(KeyIndex_t KeySelector);                     //获取按键状态，读取它不会改变已有状态
     uint8_t KEY_GetDASClick(KeyIndex_t KeySelector);                            //延迟连击读取函数，在按下与触发一次，并在长按后触发连击
+    void KEY_ClearEdge(KeyIndex_t KeySelector);                                 //清除按键边沿（消费 Rising，防同一单击被多次读取）
     /*指定按键当前的连击次数是否等于输入值
     /连击指按下，在指定时间内松开，计一次点击，指定时间内不再次点击则归零，若再次点击并松开，次数加一
     /等于后连击计数器归零，使连击判定只生效一次*/

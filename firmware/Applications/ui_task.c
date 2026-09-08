@@ -4,63 +4,127 @@
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 
-#define STATIC_BUF
+#include "menu.h"
+#include "menu_ui.h"
+#include "menu_pages.h"
+#include "functions.h"   /* 主界面创建/显示 + 一次性动作函数 */
 
-static void pcap_timer_cb(lv_timer_t *t)
+static lv_obj_t *s_menu_scr;   /* 菜单屏（主界面/应用屏由菜单应用模型统一管理） */
+
+/* 状态页实时信息：仅当菜单正显示状态页或其子页时更新 */
+static void status_timer_cb(lv_timer_t *t)
 {
-    lv_obj_t *label = (lv_obj_t *)lv_timer_get_user_data(t);
-#ifdef STATIC_BUF
-    static char buf[8];
-    snprintf(buf, sizeof(buf), "%d%% ", SW6306_ReadCapacity());
-    lv_label_set_text_static(label, buf);
-#else
-    lv_label_set_text_fmt(label, "%d%% ", SW6306_ReadCapacity());
-#endif
+    const menu_page_t *pg;
+    (void)t;
+    if (!menu_is_active()) {
+        return;
+    }
+    pg = menu_current_page();
+    if (pg != &menu_page_status &&
+        pg != &menu_page_status_battery &&
+        pg != &menu_page_status_accel &&
+        pg != &menu_page_status_timer) {
+        return;
+    }
+    menu_status_refresh();
+    menu_ui_redraw();
 }
 
-static void bat_timer_cb(lv_timer_t *t)
+/* 菜单状态变化回调：切换屏幕并重绘。
+ * 菜单激活 → 菜单屏；非菜单态 → 当前应用（menu_app_active）activate 加载其屏。
+ * 主界面也是应用（menu_app_main），不特殊。
+ * 切屏后强制整屏重绘：GC9D01 部分刷新下从未被重绘的区域可能残留
+ * 上电垃圾/白点，全屏失效可一次覆盖清除。 */
+static void menu_redraw_handler(void)
 {
-    lv_obj_t *label = (lv_obj_t *)lv_timer_get_user_data(t);
-#ifdef STATIC_BUF
-    static char buf[24];
-    if (SW6306_ReadVBUS() > 9999) {
-        snprintf(buf, sizeof(buf), "BAT:  %.2fV  %.3fA", SW6306_ReadVBAT() * 0.001f, SW6306_ReadIBAT() * 0.001f);
-    } else {
-        snprintf(buf, sizeof(buf), "BAT: %.2fV  %.3fA", SW6306_ReadVBAT() * 0.001f, SW6306_ReadIBAT() * 0.001f);
+    const menu_app_t *app = menu_app_active();
+    if (menu_is_active()) {
+        lv_screen_load(s_menu_scr);
+    } else if (app && app->activate) {
+        app->activate();   /* 非菜单态：当前应用加载自己的 screen */
     }
-    lv_label_set_text_static(label, buf);
-#else
-    if (SW6306_ReadVBUS() > 9999) {
-        lv_label_set_text_fmt(label, "BAT:  %.2fV  %.3fA", SW6306_ReadVBAT() * 0.001f, SW6306_ReadIBAT() * 0.001f);
-    } else {
-        lv_label_set_text_fmt(label, "BAT: %.2fV  %.3fA", SW6306_ReadVBAT() * 0.001f, SW6306_ReadIBAT() * 0.001f);
-    }
-#endif
+    lv_obj_invalidate(s_menu_scr);
+    menu_ui_redraw();
 }
 
-static void bus_timer_cb(lv_timer_t *t)
+/* ==================== UI 调度（仿 MiaoUI ui_loop） ====================
+ * 按键一次扫描→语义化动作→状态机路由：菜单态→菜单系统；
+ * 应用态→当前激活应用（主界面）自包含处理（绘制与按键同文件）。 */
+
+/* 当前激活应用（非菜单界面）的按键自包含处理；NULL = 无应用 */
+static void (*s_app_run)(app_action_t) = NULL;
+
+void ui_app_register(void (*run)(app_action_t))
 {
-    lv_obj_t *label = (lv_obj_t *)lv_timer_get_user_data(t);
-#ifdef STATIC_BUF
-    static char buf[24];
-    snprintf(buf, sizeof(buf), "BUS: %.2fV  %.3fA", SW6306_ReadVBUS() * 0.001f, SW6306_ReadIBUS() * 0.001f);
-    lv_label_set_text_static(label, buf);
-#else
-    lv_label_set_text_fmt(label, "BUS: %.2fV  %.3fA", SW6306_ReadVBUS() * 0.001f, SW6306_ReadIBUS() * 0.001f);
-#endif
+    s_app_run = run;
 }
 
-static void btn_event_handler(lv_event_t *e)
-{
-    uint32_t key = lv_event_get_key(e);
+/* 按键扫描 → 语义化动作（一次转换，仿 MiaoUI indevScan）：
+ * MENU/NEXT→单击 UP/DOWN；CONF→单击/双击/长按。
+ * CONF 长按结束不在此上报，由 ui_loop 检测 HOLD→NONE 边沿产生 ENTER_HOLD_END。 */
 
-    if (key == LV_KEY_ENTER) {
-        lv_label_set_text(lv_event_get_target(e), "#cf3d3e ENTER#");
-    } else if (key == KeyIndex_NEXT) {
-        lv_label_set_text(lv_event_get_target(e), "#cf3d3e NEXT#");
-    } else if (key == LV_KEY_PREV) {
-        lv_label_set_text(lv_event_get_target(e), "#cf3d3e MENU#");
+/* 单键事件检测（CONF）：单击/双击/长按 */
+static app_action_t key_event(KeyIndex_t k, app_action_t single, app_action_t dbl, app_action_t hold)
+{
+    if (KEY_GetClickTimes(k, 2)) { KEY_ClearEdge(k); return dbl; }
+    if (Key_EdgeDetect(k) == KeyEdge_Holding) { KEY_ClearEdge(k); return hold; }
+    if (KEY_GetState(k) == KeyState_LongPress) { return hold; }
+    if (KEY_GetDASClick(k)) { KEY_ClearEdge(k); return single; }
+    return APP_ACTION_NONE;
+}
+
+static app_action_t ui_scan_action(void)
+{
+    /* 菜单态：仅单击（导航/确认），双击/长按不进菜单 */
+    if (menu_is_active()) {
+        if (KEY_GetDASClick(KeyIndex_MENU)) { KEY_ClearEdge(KeyIndex_MENU); return APP_ACTION_UP; }
+        if (KEY_GetDASClick(KeyIndex_CONF)) { KEY_ClearEdge(KeyIndex_CONF); return APP_ACTION_ENTER; }
+        if (KEY_GetDASClick(KeyIndex_NEXT)) { KEY_ClearEdge(KeyIndex_NEXT); return APP_ACTION_DOWN; }
+        KEY_ClearEdge(KeyIndex_MENU);
+        KEY_ClearEdge(KeyIndex_CONF);
+        KEY_ClearEdge(KeyIndex_NEXT);
+        return APP_ACTION_NONE;
     }
+
+    /* 应用态：MENU/NEXT 仅单击；CONF 区分单击/双击/长按 */
+    if (KEY_GetDASClick(KeyIndex_MENU)) { KEY_ClearEdge(KeyIndex_MENU); return APP_ACTION_UP; }
+    if (KEY_GetDASClick(KeyIndex_NEXT)) { KEY_ClearEdge(KeyIndex_NEXT); return APP_ACTION_DOWN; }
+    return key_event(KeyIndex_CONF, APP_ACTION_ENTER, APP_ACTION_ENTER_DBL, APP_ACTION_ENTER_HOLD);
+}
+
+/* 统一 UI 调度：状态机路由——菜单态→菜单系统；应用态→当前应用自包含处理 */
+static app_action_t s_last_action = APP_ACTION_NONE;   /* CONF 长按结束边沿检测用 */
+
+static void ui_loop(void)
+{
+    app_action_t action = ui_scan_action();
+
+    /* CONF 长按结束边沿：上次 ENTER_HOLD、本次非 ENTER_HOLD（HOLD→NONE）→ ENTER_HOLD_END */
+    if (!menu_is_active() && s_app_run) {
+        if (s_last_action == APP_ACTION_ENTER_HOLD && action != APP_ACTION_ENTER_HOLD) {
+            s_app_run(APP_ACTION_ENTER_HOLD_END);
+        }
+    }
+    s_last_action = action;
+
+    if (action == APP_ACTION_NONE) {
+        return;
+    }
+    if (menu_is_active()) {
+        menu_handle(action);
+    } else if (s_app_run) {
+        s_app_run(action);
+    }
+}
+
+/* 按键扫描节拍（10ms）：空回调 LVGL 定时器。
+ * 作用：让 lv_timer_handler() 始终返回 ~10ms（取未暂停定时器最小剩余时间），
+ * 使 ui_loop 的按键扫描稳定在 10ms，不被主界面 500ms 定时器拖慢。
+ * 否则扫描周期 ≈ 500ms：单击 Rising（10ms 窗口）丢失、双击 MultiClick
+ * （500ms 窗口）被清零 → 双击失效。回调本身无事可做，仅提供节拍。 */
+static void ui_scan_tick_cb(lv_timer_t *t)
+{
+    (void)t;
 }
 
 void ui_task_func(void *pvParameters)
@@ -70,36 +134,46 @@ void ui_task_func(void *pvParameters)
     lv_port_disp_init();
     lv_port_indev_init();
 
-    lv_obj_t *scr = lv_screen_active();
+    /* ---------- 菜单 ---------- */
+    menu_init();
+    s_menu_scr = menu_ui_create();
+    menu_set_redraw_cb(menu_redraw_handler);
 
-    lv_group_t *group = lv_group_create();
-    lv_group_set_default(group);
-    lv_indev_set_group(indev_keypad, group);
-    lv_group_set_editing(group, true);
+    /* 主界面作为应用进入（菜单应用模型统一管理：create + 注册 run + 激活） */
+    menu_app_enter(&menu_app_main);
 
-    lv_obj_t *topic_label = lv_label_create(scr);
-    lv_label_set_text(topic_label, " #cf3d3e PowerBank!!!#");
-    lv_label_set_recolor(topic_label, true);
-    lv_obj_set_align(topic_label, LV_ALIGN_TOP_LEFT);
-    lv_group_focus_obj(topic_label);
+    /* 开机应用默认背光亮度（1~16，默认 8） */
+    menu_backlight_apply();
 
-    lv_obj_t *PCAP_label = lv_label_create(scr);
-    lv_obj_set_align(PCAP_label, LV_ALIGN_TOP_RIGHT);
-    lv_timer_create(pcap_timer_cb, 2000, PCAP_label);
-
-    lv_obj_t *BAT_label = lv_label_create(scr);
-    lv_obj_set_align(BAT_label, LV_ALIGN_LEFT_MID);
-    lv_timer_create(bat_timer_cb, 500, BAT_label);
-
-    lv_obj_t *BUS_label = lv_label_create(scr);
-    lv_obj_set_align(BUS_label, LV_ALIGN_BOTTOM_LEFT);
-    lv_timer_create(bus_timer_cb, 500, BUS_label);
+    lv_timer_create(status_timer_cb, 500, NULL);
+    /* 按键扫描节拍定时器：10ms，保证 ui_loop 每 10ms 扫描按键（见 ui_scan_tick_cb） */
+    lv_timer_create(ui_scan_tick_cb, 10, NULL);
 
     while (1) {
+        /* 低功耗阻塞：非 RUN 状态或唤醒数据未就绪时主动让出 CPU，等待恢复 */
+        uint8_t woke = 0;
+        while (pm_api_ui_should_block()) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            woke = 1;
+        }
+
+        if (woke != 0) {
+            /* 唤醒恢复：数据已预取就绪，先绘出新图（LVGL 重绘新镜像），再亮屏，
+             * 避免休眠前旧值闪现（亮屏优先级让位于数据读取）。 */
+            lv_timer_handler();
+            menu_backlight_apply();
+            continue;
+        }
+
+        /* 统一 UI 调度：扫描按键→动作→状态机路由（菜单/主界面应用自包含处理） */
+        ui_loop();
+
         uint32_t t = lv_timer_handler();
         if (t == LV_NO_TIMER_READY) {
             t = LV_DEF_REFR_PERIOD;
         }
+        /* 按键防双读已改由 ui_scan_action 消费 Rising 边沿（KEY_ClearEdge），
+         * 此处无需人为延长循环间隔（会错过 Rising 导致吞键）。 */
         vTaskDelay(pdMS_TO_TICKS(t));
     }
 }

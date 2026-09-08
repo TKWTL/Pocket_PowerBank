@@ -1,7 +1,13 @@
 #include "sw6306.h"
 #include <math.h>
 
+/* initialized 默认 0（零初始化，.bss）：MCU 复位后即视为未初始化，
+ * SW6306_task 会对 SW6306 执行一次 ForceOff+Init（芯片复位后重置）。
+ * 芯片独立复位（PowerLoad 读回失配）、ADCLoad 数据越界、MarkUninitialized
+ * 手动失能同样会清 0，从而触发重新 Init。 */
 static struct SW6306_StatusTypedef SW6306_Status;//SW6306状态全局变量
+
+static uint8_t s_pomax_target = SW6306_OUTPUT_POWER_MAX;   // 运行时最大输出功率目标（W），Init 写入、可由 SetMaxOutputPower 修改
 
 
 /*******************************基本操作区*************************************/
@@ -92,7 +98,10 @@ SW6306_RET SW6306_ADCLoad(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_TNTC, &SW6306_Status.tntc);
     SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_TCHIP, &SW6306_Status.tchip);
     SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_VNTC, &SW6306_Status.vntc);
-    if(SW6306_Status.tntc > 24U    || SW6306_Status.tntc <  5U)    SW6306_Status.initialized = 0;//数据边界检查
+    /* tntc 边界 5~24 = NTC -55~40°C：上限太低，快充/快放时电池正常发热超 40°C 会误判
+     * 数据不合规 → initialized=0 → ForceOff+Init → 放电掉功率（2026-08-17/18 两次实测确认）。
+     * 放宽为 5~50 = -55~170°C，仅拦截真正无效的通信数据。 */
+    if(SW6306_Status.tntc > 50U    || SW6306_Status.tntc <  5U)    SW6306_Status.initialized = 0;//数据边界检查
     if(SW6306_Status.tchip > 3203U || SW6306_Status.tchip < 1500U) SW6306_Status.initialized = 0;//不合规时重新初始化
     SW6306_MUTEX_GIVE;
     SW6306_FUNC_END;
@@ -151,6 +160,34 @@ float SW6306_TNTC_Calc(void)
     const float t_k = 1.0f / inv_t;
 
     return t_k - 273.15f;
+}
+
+/* 独立计算 API：由 VNTC/INTC 反算 Rntc 再用 Beta 公式求温度（°C）。
+ * 纯计算不写句柄；无 FPU MCU 可置 SW6306_NTC_TEMP_CALC_EN=0 裁剪本函数（不链接浮点计算）。
+ * 依赖：先 SW6306_ADCLoad() 更新 vntc、SW6306_StatusLoad() 更新 intc。 */
+#if SW6306_NTC_TEMP_CALC_EN
+float SW6306_CalcNTCTemp_C(void)
+{
+    return SW6306_TNTC_Calc();
+}
+#endif
+
+/* 计算 NTC 温度并更新句柄（NTCTempLoad：调计算 API 缓存，供 UI/菜单读取）。
+ * 数据无效时 ntc_temp 为 114514（与 TNTC_Calc 一致）；无 FPU（宏=0）时句柄保持 0。 */
+SW6306_RET SW6306_NTCTempLoad(SW6306_NOARG)
+{
+    SW6306_FUNC_BEGIN;
+#if SW6306_NTC_TEMP_CALC_EN
+    SW6306_Status.ntc_temp = SW6306_CalcNTCTemp_C();
+#else
+    SW6306_Status.ntc_temp = 0.0f;
+#endif
+    SW6306_FUNC_END;
+}
+
+float SW6306_ReadNTCTemp(void)//读取句柄中的 NTC 温度（°C，Beta 公式计算）
+{
+    return SW6306_Status.ntc_temp;
 }
 
 SW6306_RET SW6306_PortStatusLoad(SW6306_NOARG)//更新端口状态镜像寄存器(0x13,0x18,0x19,0x1C,0x1D)
@@ -217,7 +254,16 @@ uint8_t SW6306_ReadMaxInputPower(void)//读取最大输入功率（单位：W）
 {
     return SW6306_Status.pimax;
 }
+uint8_t SW6306_ReadPiMaxSet(void)//读取PISET设置值（0x45，PowerLoad后更新，单位：W）
+{
+    return SW6306_Status.pimax_set;
+}
+uint8_t SW6306_ReadPoMaxSet(void)//读取POSET设置值（0x4F，PowerLoad后更新，单位：W）
+{
+    return SW6306_Status.pomax_set;
+}
 
+/* 协议名缩短到 ≤5 字符，便于 160x40 屏 UI 一行显示 */
 static const char * const sw6306_quickcharge_str[] = {
     "NONE",
     "QC2.0",
@@ -225,17 +271,17 @@ static const char * const sw6306_quickcharge_str[] = {
     "QC3+",
     "FCP",
     "SCP",
-    "PD(FIX)",
-    "PD(PPS)",
+    "PDFIX",
+    "PDPPS",
     "PE1.1",
     "PE2.0",
-    "VOOC1.0",
-    "VOOC4.0",
+    "VOOC1",
+    "VOOC4",
     "SVOOC",
     "SFCP",
     "AFC",
     "UFCS",
-    "UNKNOWN"
+    "UNK"
 };
 const char *SW6306_ReadProtocol(void)//当前协议读取（返回字符串地址）
 {
@@ -321,37 +367,70 @@ uint8_t SW6306_IsDischarging(void)//SW6306是否正在放电
 {
     return SW6306_Status.sys_stat & SW6306_SYS_STAT_DISCHGING;
 }
-uint8_t SW6306_IsFullCharged(void)//SW6306是否充满
+/**********************状态查询区（实时/事件语义拆分）**************************/
+/* 重要：REG0x15/0x2A/0x2B 是「历史事件」寄存器（写1清零或下次开机自动清零），
+ * 只能用于判断"曾发生过什么"，不能当作实时状态。
+ * 实时状态请使用 REG0x18（系统状态）与 ADC 采样值。 */
+
+/* ============ 实时状态（REG0x18 / ADC采样） ============ */
+uint8_t SW6306_IsChargeStoppedByFault(void)//REG0x18.bit7：异常导致充电关闭（实时）
 {
-    return SW6306_Status.fault2 & SW6306_FAULT2_FULL;
+    return SW6306_Status.sys_stat & SW6306_SYS_STAT_CHGERR;
 }
-uint8_t SW6306_IsBatteryDepleted(void)//SW6306电池是否耗尽
+uint8_t SW6306_IsDischargeStoppedByFault(void)//REG0x18.bit6：异常导致放电关闭（实时）
 {
-    return SW6306_Status.fault0 & SW6306_FAULT0_UVLO;
+    return SW6306_Status.sys_stat & SW6306_SYS_STAT_DISCHGERR;
 }
-uint8_t SW6306_IsCapacityLearned(void)//是否已完成电量学习
+
+/* ============ 历史事件（REG0x15/0x2A/0x2B） ============ */
+uint8_t SW6306_HasUVLOEvent(void)//REG0x15.bit4：曾发生UVLO事件
 {
-    return SW6306_Status.fault0 & SW6306_FAULT0_LEARNEND;
+    return !!(SW6306_Status.fault0 & SW6306_FAULT0_UVLO);
 }
-uint8_t SW6306_IsErrorinCharging(void)//充电是否出现异常
+uint8_t SW6306_HasChargeErrorEvent(void)//REG0x15.bit3：曾发生充电异常事件
 {
-    return SW6306_Status.fault0 & SW6306_FAULT0_CHGERR;
+    return !!(SW6306_Status.fault0 & SW6306_FAULT0_CHGERR);
 }
-uint8_t SW6306_IsErrorinDischarging(void)//放电是否出现异常
+uint8_t SW6306_HasDischargeErrorEvent(void)//REG0x15.bit2：曾发生放电异常事件
 {
-    return SW6306_Status.fault0 & SW6306_FAULT0_DISCHGERR;
+    return !!(SW6306_Status.fault0 & SW6306_FAULT0_DISCHGERR);
 }
-uint8_t SW6306_IsKeyEvent(void)//是否触发了按键事件
+uint8_t SW6306_HasKeyEvent(void)//REG0x15.bit1：曾发生按键事件
 {
-    return SW6306_Status.fault0 & SW6306_FAULT0_KEY;
+    return !!(SW6306_Status.fault0 & SW6306_FAULT0_KEY);
 }
-uint8_t SW6306_IsSceneChanged(void)//是否发生场景变化
+uint8_t SW6306_HasSceneEvent(void)//REG0x15.bit0：曾发生场景变化事件
 {
-    return SW6306_Status.fault0 & SW6306_FAULT0_SCENE;
+    return !!(SW6306_Status.fault0 & SW6306_FAULT0_SCENE);
 }
-uint8_t SW6306_IsOverHeated(void)//是否发生过温异常
+uint8_t SW6306_HasFullChargeEvent(void)//REG0x2B.bit5：曾发生充满事件（下次开机自动清零）
 {
-    return (SW6306_Status.fault1&(SW6306_FAULT1_OT_CHIP|SW6306_FAULT1_OT_NTC))|(SW6306_Status.fault2&(SW6306_FAULT2_OT_CHIP|SW6306_FAULT2_OT_NTC));
+    return !!(SW6306_Status.fault2 & SW6306_FAULT2_FULL);
+}
+uint8_t SW6306_ReadEventFlags(void)//读取REG0x15原始事件值
+{
+    return SW6306_Status.fault0;
+}
+uint8_t SW6306_ReadFaultDischarge(void)//读取REG0x2A放电异常历史原因
+{
+    return SW6306_Status.fault1;
+}
+uint8_t SW6306_ReadFaultCharge(void)//读取REG0x2B充电异常历史原因
+{
+    return SW6306_Status.fault2;
+}
+uint8_t SW6306_ReadSystemStatus(void)//读取REG0x18系统实时状态
+{
+    return SW6306_Status.sys_stat;
+}
+SW6306_RET SW6306_ClearEvents(SW6306_ARGS(uint8_t events))//写1清除REG0x15已处理的事件位（W1C）
+{
+    SW6306_FUNC_BEGIN;
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_FAULT0);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_STRG_FAULT0, events & SW6306_FAULT0_MSK);
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
 }
 
 
@@ -364,9 +443,16 @@ SW6306_RET SW6306_CapacityLoad(SW6306_NOARG)//更新容量与库仑计镜像寄�
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_BATLVL_DISPLAY, &SW6306_Status.capacity);//0x99
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_LEARN, &SW6306_Status.learn_stat);//0xA2
 
-    /* 0x86~0x87：最大容量（2B） */
-    SW6306_EXEC(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_GAUGE_MCAPL, (uint8_t*)&SW6306_Status.maxcap, 2, (uint8_t*)&SW6306_Status.flag));
-    SW6306_UNTIL(SW6306_Status.flag);
+    /* 0x86~0x87：最大容量（12 位：0x86 为低 8 位，0x87 低 4 位为高 4 位；0x87 高 4 位保留）。
+     * 不能连续读 2 字节进小端 uint16（会把 0x87 完整 8 位当高位），必须单独组合。 */
+    {
+        uint8_t mcapl, mcapm;
+        SW6306_EXEC(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_GAUGE_MCAPL, &mcapl, 1, (uint8_t*)&SW6306_Status.flag));
+        SW6306_UNTIL(SW6306_Status.flag);
+        SW6306_EXEC(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_GAUGE_MCAPH, &mcapm, 1, (uint8_t*)&SW6306_Status.flag));
+        SW6306_UNTIL(SW6306_Status.flag);
+        SW6306_Status.maxcap = (uint16_t)(((uint16_t)(mcapm & 0x0F) << 8) | mcapl);
+    }
 
     /* 0x88~0x8A：当前容量（3B） */
     SW6306_Status.presentcap = 0;
@@ -381,13 +467,45 @@ uint8_t SW6306_ReadCapacity(void)//读取SW6306显示电量
 {
     return SW6306_Status.capacity;
 }
-float SW6306_ReadMaxGuageCap(void)//读取库仑计最大容量（单位：mAh）
+/* 注意：0x86/0x88 库仑计寄存器记录的是【能量】而非电荷容量（mAh）！
+ *  - 最大能量 = maxcap × 326.2236 mWh（12bit 粗分辨率）
+ *  - 当前能量 = presentcap × 0.07964 mWh（24bit 细分辨率）
+ *  - 326.2236 / 0.07964 ≈ 4096，两者仅分辨率不同。
+ * 例：2S1P 30Q 充满后 maxcap=65 → 65×326.22 ≈ 21203 mWh ≈ 21.2 Wh（≈7.2V×3.0Ah）。 */
+float SW6306_ReadMaxEnergy_mWh(void)//读取库仑计最大能量（单位：mWh）
 {
-    return SW6306_Status.maxcap* 326.2236f;
+    return SW6306_Status.maxcap * 326.2236f;
 }
-float SW6306_ReadPresentGuageCap(void)//读取库仑计当前容量（单位：mAh）
+float SW6306_ReadRemainEnergy_mWh(void)//读取库仑计当前（剩余）能量（单位：mWh）
 {
-    return SW6306_Status.presentcap* 0.07964f;
+    return SW6306_Status.presentcap * 0.07964f;
+}
+sw6306_learn_state_t SW6306_ReadLearnState(void)//读取容量学习状态（0xA2 镜像，3 态 + Unknown）
+{
+    /* bit5=END 在前为高位、bit6=ING 为低位：
+     * 00=等待学习 01=学习中 10=完成 11=共存(不存在) */
+    uint8_t raw = SW6306_Status.learn_stat;
+    return (sw6306_learn_state_t)(((raw & SW6306_LEARN_END) ? 2U : 0U) |
+                                  ((raw & SW6306_LEARN_ING) ? 1U : 0U));
+}
+
+/* 容量学习使能/失能：enable=1 使能 0x14E[4] LEARNEN + 清 0xA2[5] 历史完成标志（重新武装）；
+ * enable=0 关闭 LEARNEN。
+ * 注意：SW6306 实际学习在「触发 UVLO 后再次开始充电」时启动，使能不保证立即开始。 */
+SW6306_RET SW6306_CapacityLearningSet(SW6306_ARGS(uint8_t enable))
+{
+    SW6306_FUNC_BEGIN;
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_GAUGE0);
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_GAUGE0, SW6306_GAUGE0_LEARNEN, enable ? SW6306_GAUGE0_LEARNEN : 0x00);
+    if(enable)
+    {
+        /* 使能时清历史完成标志，重新武装学习 */
+        SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_LEARN);
+        SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_STRG_LEARN, SW6306_LEARN_END, 0x00);
+    }
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
 }
 
 /********************************操作区****************************************/
@@ -436,6 +554,190 @@ SW6306_RET SW6306_Unlock_Nolock(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_WREN, 0x40);
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_WREN, 0x80);
     //SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
+}
+
+/* 设置最大输出功率（单位W，如45/18；最大100W）。
+ * 解锁并写入 POSET(0x4F)，同步更新镜像与运行时目标值。
+ * 注意：新功率在下次插拔/重新协商后才完全生效。 */
+SW6306_RET SW6306_SetMaxOutputPower(SW6306_ARGS(uint8_t watt))
+{
+    SW6306_FUNC_BEGIN;
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_NOARG(SW6306_Unlock_Nolock);
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_POSET);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_POSET, watt);
+    SW6306_Status.pomax_set = watt;
+    s_pomax_target = watt;
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
+}
+
+uint8_t SW6306_GetMaxOutputPowerSetting(void)
+{
+    return s_pomax_target;
+}
+
+/* 端口快充总开关（0x11F PORTQC）：0=使能快充，1=禁止快充。
+ * A 口仅输出方向；C 口可选输入/输出。 */
+SW6306_RET SW6306_PortFastChargeSet(SW6306_ARGS(sw6306_port_t port, sw6306_port_dir_t dir, uint8_t enable))
+{
+    uint8_t mask = 0;
+    SW6306_FUNC_BEGIN;
+
+    switch(port)
+    {
+        case SW6306_PORT_C1: mask = (dir == SW6306_PORT_DIR_IN) ? SW6306_PORTQC_NOC1IN : SW6306_PORTQC_NOC1OUT; break;
+        case SW6306_PORT_C2: mask = (dir == SW6306_PORT_DIR_IN) ? SW6306_PORTQC_NOC2IN : SW6306_PORTQC_NOC2OUT; break;
+        case SW6306_PORT_A1: mask = SW6306_PORTQC_NOA1; break;
+        case SW6306_PORT_A2: mask = SW6306_PORTQC_NOA2; break;
+        default: SW6306_FUNC_END; return;
+    }
+
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_PORTQC);
+    /* enable=1 使能 → 清禁止位(0)；enable=0 禁止 → 置禁止位(1) */
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PORTQC, mask, enable ? 0x00 : mask);
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
+}
+
+/* 全局协议开关（source/sink 级，非端口×协议矩阵）。
+ * PD source(0x133[7])、PD sink(0x137[0])、PPS source(0x134，保持 Init 的 PPS1/3)；
+ * QC/FCP/AFC/SCP/PE/SFCP/VOOC/SVOOC/UFCS 用 0x12A/0x12B/0x12C（手册 V0.3.0）。
+ * 极性注意：绝大多数协议 0=使能/1=禁止（active low）；VOOC 系列相反（active HIGH，1=使能/0=禁止）。
+ * 手册无独立开关的方向（QC sink、FCP sink、PE sink、SFCP sink、SVOOC sink）不操作直接返回。 */
+SW6306_RET SW6306_ProtocolEnable(SW6306_ARGS(sw6306_proto_t proto, sw6306_proto_dir_t dir, uint8_t enable))
+{
+    uint16_t reg = 0;
+    uint8_t mask = 0;
+    uint8_t active_high = 0;
+    SW6306_FUNC_BEGIN;
+
+    switch(proto)
+    {
+        case SW6306_PROTO_PD:
+            if(dir == SW6306_PROTO_DIR_SOURCE) { reg = SW6306_CTRG_PD0; mask = SW6306_PD0_NOPDSRC; }
+            else { reg = SW6306_CTRG_PD4; mask = SW6306_PD4_NOPDSNK; }
+            break;
+        case SW6306_PROTO_PPS:
+            if(dir != SW6306_PROTO_DIR_SOURCE) { SW6306_FUNC_END; return; } /* PPS 仅 source */
+            /* 保持 Init 配置：PPS1/PPS3 使能（4 个 PPS 最多响应 2 个） */
+            reg  = SW6306_CTRG_PD1;
+            mask = SW6306_PD1_NOPPS1 | SW6306_PD1_NOPPS3;
+            break;
+        case SW6306_PROTO_QC:
+            if(dir != SW6306_PROTO_DIR_SOURCE) { SW6306_FUNC_END; return; } /* 0x12C 无 QC sink 位 */
+            reg = SW6306_CTRG_P_DPDM3;
+            mask = SW6306_P_DPDM3_NOQC2 | SW6306_P_DPDM3_NOQC3 | SW6306_P_DPDM3_NOQC3P;
+            break;
+        case SW6306_PROTO_FCP:
+            if(dir != SW6306_PROTO_DIR_SOURCE) { SW6306_FUNC_END; return; } /* 手册无 FCP sink 位 */
+            reg = SW6306_CTRG_P_DPDM3; mask = SW6306_P_DPDM3_NOFCP;
+            break;
+        case SW6306_PROTO_AFC:
+            if(dir == SW6306_PROTO_DIR_SOURCE) { reg = SW6306_CTRG_P_DPDM3; mask = SW6306_P_DPDM3_NOAFC; }
+            else { reg = SW6306_CTRG_P_DPDM5; mask = SW6306_P_DPDM5_NOAFC; }
+            break;
+        case SW6306_PROTO_SCP:
+            if(dir == SW6306_PROTO_DIR_SOURCE) { reg = SW6306_CTRG_P_DPDM3; mask = SW6306_P_DPDM3_NOSCP_HV | SW6306_P_DPDM3_NOSCP_LV; }
+            else { reg = SW6306_CTRG_P_DPDM5; mask = SW6306_P_DPDM5_NOSCP; }
+            break;
+        case SW6306_PROTO_PE:
+            if(dir != SW6306_PROTO_DIR_SOURCE) { SW6306_FUNC_END; return; } /* 手册无 PE sink 位 */
+            reg = SW6306_CTRG_P_DPDM4; mask = SW6306_P_DPDM4_NOPE;
+            break;
+        case SW6306_PROTO_SFCP:
+            if(dir != SW6306_PROTO_DIR_SOURCE) { SW6306_FUNC_END; return; } /* 手册无 SFCP sink 位 */
+            reg = SW6306_CTRG_P_DPDM4; mask = SW6306_P_DPDM4_NOSFCP;
+            break;
+        case SW6306_PROTO_VOOC:
+            /* VOOC 系列 active HIGH */
+            if(dir == SW6306_PROTO_DIR_SOURCE) { reg = SW6306_CTRG_P_DPDM4; mask = SW6306_P_DPDM4_VOOC1 | SW6306_P_DPDM4_VOOC4; }
+            else { reg = SW6306_CTRG_P_DPDM5; mask = SW6306_P_DPDM5_VOOC; }
+            active_high = 1;
+            break;
+        case SW6306_PROTO_SVOOC:
+            if(dir != SW6306_PROTO_DIR_SOURCE) { SW6306_FUNC_END; return; } /* 手册无 SVOOC sink 位 */
+            reg = SW6306_CTRG_P_DPDM4; mask = SW6306_P_DPDM4_SVOOC;
+            active_high = 1;
+            break;
+        case SW6306_PROTO_UFCS:
+            if(dir == SW6306_PROTO_DIR_SOURCE) { reg = SW6306_CTRG_P_DPDM4; mask = SW6306_P_DPDM4_NOUFCS; }
+            else { reg = SW6306_CTRG_P_DPDM5; mask = SW6306_P_DPDM5_NOUFCS; }
+            break;
+        default:
+            SW6306_FUNC_END; return;
+    }
+
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, reg);
+    if(active_high)
+    {
+        /* VOOC 系列 active HIGH：enable=1 使能 → 置位(1)；enable=0 禁止 → 清位(0) */
+        SW6306_SPAWN_ARGS(SW6306_ByteModify, reg, mask, enable ? mask : 0x00);
+    }
+    else
+    {
+        /* 常规协议 active low（0=使能/1=禁止）：enable=1 使能 → 清位；enable=0 禁止 → 置位 */
+        SW6306_SPAWN_ARGS(SW6306_ByteModify, reg, mask, enable ? 0x00 : mask);
+    }
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
+}
+
+/* PPS 档位开关：操作 0x134 PD1 的 NOPPS1/NOPPS3（active low：1=禁止/0=使能）。
+ * 只提供 PPS1/PPS3 两个档位；PPS0/PPS2 始终不使用（Init 已禁止 NOPPS0/NOPPS2） */
+SW6306_RET SW6306_PPSEnable(SW6306_ARGS(sw6306_pps_t pps, uint8_t enable))
+{
+    uint8_t mask;
+    SW6306_FUNC_BEGIN;
+    switch (pps) {
+    case SW6306_PPS_1: mask = SW6306_PD1_NOPPS1; break;
+    case SW6306_PPS_3: mask = SW6306_PD1_NOPPS3; break;
+    default: SW6306_FUNC_END; return;
+    }
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_PD1);
+    /* enable=1 使能 → 清禁止位(0)；enable=0 禁止 → 置禁止位(1) */
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PD1, mask, enable ? 0x00 : mask);
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
+}
+
+/* 设置最大输入功率（单位W，最大100W）：解锁并写 PISET(0x45)，同步镜像 */
+SW6306_RET SW6306_SetMaxInputPower(SW6306_ARGS(uint8_t watt))
+{
+    SW6306_FUNC_BEGIN;
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_NOARG(SW6306_Unlock_Nolock);
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_PISET);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PISET, watt);
+    SW6306_Status.pimax_set = watt;
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
+}
+
+/* 手动触发 PD/PPS 电流能力播发（写 0x2E SRCCAP：重新广播 Source Capability，使已连接对端重新协商）。
+ * PPS 档位/功率设置后调用，让新能力立即生效（无需等待重新插拔） */
+SW6306_RET SW6306_PPSBroadcast(SW6306_NOARG)
+{
+    SW6306_FUNC_BEGIN;
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_PD_CMD);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD_CMD, SW6306_PD_CMD_SRCCAP);
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
+}
+
+/* 手动触发 UFCS 电流能力播发（写 UFCS_CMD SRCCAP） */
+SW6306_RET SW6306_UFCSBroadcast(SW6306_NOARG)
+{
+    SW6306_FUNC_BEGIN;
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_UFCS_CMD);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_UFCS_CMD, SW6306_UFCS_CMD_SRCCAP);
+    SW6306_MUTEX_GIVE;
     SW6306_FUNC_END;
 }
 
@@ -723,7 +1025,8 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_CLICK, SW6306_CLICK);
     //解锁寄存器写入
     SW6306_SPAWN_NOARG(SW6306_Unlock_Nolock);
-    //使能UVLO、充放电异常与场景变化中断
+    //使能UVLO、充放电异常与场景变化中断（插拔/唤醒事件可经IRQ脚发脉冲唤醒MCU）
+    //注意：硬件KEY引脚未引出，无需使能按键事件中断（SW6306_KEY_INT_EN）
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_INT_EN, SW6306_UVLO_INT_EN|SW6306_CHGERR_INT_EN|SW6306_DISCHGERR_INT_EN|SW6306_SCENE_INT_EN);
     //IRQ脚拉低10ms
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_IOCTL, SW6306_IRQ1);
@@ -735,8 +1038,8 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PISET, SW6306_INPUT_POWER_MAX);
     //设置充电电池端限流值
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_CHG_IBAT, (SW6306_BAT_CHG_CURR_MAX/100)&0xFFU);
-    //输出功率设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_POSET, SW6306_OUTPUT_POWER_MAX);
+    //输出功率设置（写入运行时目标，默认 SW6306_OUTPUT_POWER_MAX）
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_POSET, s_pomax_target);
     //输出功率设置
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_STRG_LEARN, SW6306_LEARN_END, 0x00);
     //切换寄存器组
@@ -789,8 +1092,9 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_P_DPDM5, SW6306_P_DPDM5_MSK, SW6306_P_DPDM5_VOOC|SW6306_P_DPDM5_SDP2A);
     //数码管驱动电流5mA,轻载5s后关闭输出
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_DISPLAY, SW6306_CTRG_DISPLAY_MSK, SW6306_CTRG_DISPLAY_2_5M);
-    //Rdc计算使能,容量学习使能
-    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_GAUGE0, SW6306_GAUGE0_MSK, SW6306_GAUGE0_RDCEN|SW6306_GAUGE0_LEARNEN);
+    //Rdc计算使能 + 无条件关闭容量学习（LEARNEN=0：data 只含 RDCEN，mask=0x90 覆盖 LEARNEN 位即清零；
+    //需要容量学习时由菜单/守护程序调 SW6306_CapacityLearningSet(1) 手动开启）
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_GAUGE0, SW6306_GAUGE0_MSK, SW6306_GAUGE0_RDCEN);
     //短按键功能由寄存器决定
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_KEY0, SW6306_KEY0_MSK, SW6306_KEY0_REGSET);
     //短按键打开灯显与已经接入的输出口,长按关闭下游口,双击打开WLED
@@ -805,6 +1109,10 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_FAULT0);
     //清标志位
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_STRG_FAULT0, SW6306_FAULT0_MSK);
+    //软件触发输出：补发一次短按键事件（0x20=1），打开灯显与已接入的输出口。
+    //初始化开头的短按键发生在KEY0/KEY1配置之前，可能按旧按键行为处理；
+    //在KEY配置与清标志完成后再次触发，确保输出按新配置打开。
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_CLICK, SW6306_CLICK);
     SW6306_Status.initialized = 1;
     SW6306_MUTEX_GIVE;
     SW6306_FUNC_END;
@@ -812,14 +1120,25 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     
 uint8_t SW6306_IsInitialized(void)//检测SW6306是否已初始化过，须在SW6306_PowerLoad()后执行
 {
-    if(SW6306_Status.initialized)
-    {
-        if((SW6306_Status.pimax_set == SW6306_INPUT_POWER_MAX)&&(SW6306_Status.pomax_set == SW6306_OUTPUT_POWER_MAX)) return 1;
-        else
-        {
-            SW6306_Status.initialized = 0;
-            return 0;
-        }
-    }
-    else return 0;
+    /* 判据：initialized 标志 + PowerLoad 读回配置双重校验。
+     *  - initialized==1 且读回匹配 → 正常返回 1；
+     *  - initialized==1 但读回失配 → 芯片被独立复位/配置丢失，失能并返回 0（触发重新 Init）；
+     *  - initialized==0（MCU 复位默认 / 手动失能 / ADCLoad 数据越界 / 曾失配）→ 一律视为
+     *    需重新 Init，返回 0（MCU 复位后 SW6306 走一次重置；手动失能必须真正重新初始化）。 */
+    if(SW6306_Status.initialized == 0)
+        return 0;
+    if((SW6306_Status.pimax_set == SW6306_INPUT_POWER_MAX)&&(SW6306_Status.pomax_set == s_pomax_target))
+        return 1;
+    SW6306_Status.initialized = 0;
+    return 0;
+}
+
+/* 手动失能已初始化标志（供 UI 调用强制重新初始化）。
+ * 置 0 后，下次 SW6306_task 的 IsInitialized 一律判定为失配（返回 0），
+ * 触发 ForceOff+Init 重新初始化 SW6306。 */
+SW6306_RET SW6306_MarkUninitialized(SW6306_NOARG)
+{
+    SW6306_FUNC_BEGIN;
+    SW6306_Status.initialized = 0;
+    SW6306_FUNC_END;
 }

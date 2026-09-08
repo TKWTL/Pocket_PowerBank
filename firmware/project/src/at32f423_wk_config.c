@@ -189,6 +189,9 @@ void wk_periph_clock_config(void)
   /* enable dma1 periph clock */
   crm_periph_clock_enable(CRM_DMA1_PERIPH_CLOCK, TRUE);
 
+  /* enable tmr7 periph clock */
+  crm_periph_clock_enable(CRM_TMR7_PERIPH_CLOCK, TRUE);
+
   /* enable spi3 periph clock */
   crm_periph_clock_enable(CRM_SPI3_PERIPH_CLOCK, TRUE);
 
@@ -231,9 +234,12 @@ void wk_nvic_config(void)
   nvic_irq_enable(EXINT1_IRQn, 5, 0);
   nvic_irq_enable(EXINT2_IRQn, 5, 0);
   nvic_irq_enable(DMA1_Channel1_IRQn, 5, 0);
+  nvic_irq_enable(DMA1_Channel6_IRQn, 5, 0);
+  nvic_irq_enable(DMA1_Channel7_IRQn, 5, 0);
   nvic_irq_enable(EXINT9_5_IRQn, 5, 0);
   nvic_irq_enable(I2C1_EVT_IRQn, 5, 0);
   nvic_irq_enable(I2C1_ERR_IRQn, 5, 0);
+  nvic_irq_enable(TMR7_GLOBAL_IRQn, 0, 0);
 }
 
 /**
@@ -311,7 +317,7 @@ void wk_exint_config(void)
   gpio_default_para_init(&gpio_init_struct);
   gpio_init_struct.gpio_mode = GPIO_MODE_INPUT;
   gpio_init_struct.gpio_pins = NEXT_PIN;
-  gpio_init_struct.gpio_pull = GPIO_PULL_NONE;
+  gpio_init_struct.gpio_pull = GPIO_PULL_DOWN;
   gpio_init(NEXT_GPIO_PORT, &gpio_init_struct);
 
   scfg_exint_line_config(SCFG_PORT_SOURCE_GPIOA, SCFG_PINS_SOURCE0);

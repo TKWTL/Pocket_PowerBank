@@ -49,15 +49,18 @@ TaskHandle_t ui_task_handle;
 TaskHandle_t powerdown_task_handle;
 TaskHandle_t button_task_handle;
 TaskHandle_t SW6306_task_handle;
+TaskHandle_t Load_Task_handle;
 /* variables for task tcb and stack */
-StackType_t my_task01_stack[768];
-StackType_t my_task02_stack[128];
-StackType_t my_task03_stack[64];
-StackType_t my_task04_stack[128];
+StackType_t my_task01_stack[1280];
+StackType_t my_task02_stack[256];
+StackType_t my_task03_stack[128];
+StackType_t my_task04_stack[256];
+StackType_t my_task05_stack[256];
 StaticTask_t my_task01_buffer;
 StaticTask_t my_task02_buffer;
 StaticTask_t my_task03_buffer;
 StaticTask_t my_task04_buffer;
+StaticTask_t my_task05_buffer;
 
 /* mutex handler */
 SemaphoreHandle_t mutex_i2c_handle;
@@ -131,7 +134,7 @@ void freertos_task_create(void)
   /* create the ui_task task by static */
   ui_task_handle = xTaskCreateStatic(ui_task_func,
                                        "ui_task",
-                                       768,
+                                       1280,
                                        NULL,
                                        14,
                                        my_task01_stack,
@@ -140,7 +143,7 @@ void freertos_task_create(void)
   /* create the powerdown_task task by static */
   powerdown_task_handle = xTaskCreateStatic(powerdown_task_func,
                                        "powerdown_task",
-                                       128,
+                                       256,
                                        NULL,
                                        15,
                                        my_task02_stack,
@@ -149,7 +152,7 @@ void freertos_task_create(void)
   /* create the button_task task by static */
   button_task_handle = xTaskCreateStatic(button_task_func,
                                        "button_task",
-                                       64,
+                                       128,
                                        NULL,
                                        15,
                                        my_task03_stack,
@@ -158,11 +161,20 @@ void freertos_task_create(void)
   /* create the SW6306_task task by static */
   SW6306_task_handle = xTaskCreateStatic(SW6306_task_func,
                                        "SW6306_task",
-                                       128,
+                                       256,
                                        NULL,
                                        14,
                                        my_task04_stack,
                                        &my_task04_buffer);
+
+  /* create the Load_Task task by static */
+  Load_Task_handle = xTaskCreateStatic(load_task,
+                                       "Load_Task",
+                                       256,
+                                       NULL,
+                                       14,
+                                       my_task05_stack,
+                                       &my_task05_buffer);
 }
 
 /**
@@ -311,6 +323,32 @@ __WEAK void SW6306_task_func(void *pvParameters)
     vTaskDelay(1);
 
   /* add user code end SW6306_task_func 1 */
+  }
+}
+
+/**
+  * @brief Load_Task function.
+  * @param  none
+  * @retval none
+  */
+__WEAK void load_task(void *pvParameters)
+{
+  /* add user code begin load_task 0 */
+
+  /* add user code end load_task 0 */
+
+  /* add user code begin load_task 2 */
+
+  /* add user code end load_task 2 */
+
+  /* Infinite loop */
+  while(1)
+  {
+  /* add user code begin load_task 1 */
+
+    vTaskDelay(1);
+
+  /* add user code end load_task 1 */
   }
 }
 

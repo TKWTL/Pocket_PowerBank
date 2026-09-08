@@ -9,8 +9,11 @@ LR_IROM1 0x08000000 0x00040000  {    ; load region size_region
    .ANY (+RO)
    .ANY (+XO)
   }
-  RW_IRAM1 0x20000000 0x0000C000  {  ; RW data
+  RW_IRAM1 0x20000000 0x0000BFC0  {  ; RW data（2026-08-29：noinit 区缩至 64B，多出 0xC0 归还此处）
    .ANY (+RW +ZI)
+  }
+  RW_IRAM_NOINIT 0x2000BFC0 UNINIT 0x00000040  {  ; 复位/掉电后保留（诊断现场：崩溃/栈溢出/RST，64B 足矣）
+   *.o (.noinit)
   }
 }
 

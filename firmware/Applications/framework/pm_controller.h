@@ -30,6 +30,7 @@ void pm_controller_pause_idle(pm_controller_t *ctx);
 void pm_controller_resume_idle(pm_controller_t *ctx);
 void pm_controller_notify_wake(pm_controller_t *ctx);
 pm_power_state_t pm_controller_step(pm_controller_t *ctx);
+uint8_t pm_controller_is_ui_blocked(pm_controller_t *ctx);
 
 #ifdef __cplusplus
 }

@@ -42,7 +42,18 @@ extern "C" {
 
 /* exported types ------------------------------------------------------------*/
 /* add user code begin exported types */
-
+/* 崩溃现场捕获结构：RAM 在系统复位(NVIC_SystemReset)后保留，掉电复位则清空。
+ * 精简为定位必需字段（7×4=28B），控制在 .noinit 64B 预算内。 */
+typedef struct {
+    uint32_t magic;   /* 有效标记 0xFA17CA11 */
+    uint32_t hfsr;    /* 硬故障状态寄存器 */
+    uint32_t cfsr;    /* 可配置故障状态(MMFSR|BFSR|UFSR) */
+    uint32_t bfar;    /* 总线故障地址 */
+    uint32_t pc;      /* 异常压栈现场 PC */
+    uint32_t lr;      /* 异常压栈现场 LR（返回地址） */
+    uint32_t psr;     /* 异常压栈现场 PSR */
+} hardfault_info_t;
+extern volatile hardfault_info_t g_hardfault;
 /* add user code end exported types */
 
 /* exported constants --------------------------------------------------------*/
@@ -68,9 +79,12 @@ void EXINT0_IRQHandler(void);
 void EXINT1_IRQHandler(void);
 void EXINT2_IRQHandler(void);
 void DMA1_Channel1_IRQHandler(void);
+void DMA1_Channel6_IRQHandler(void);
+void DMA1_Channel7_IRQHandler(void);
 void EXINT9_5_IRQHandler(void);
 void I2C1_EVT_IRQHandler(void);
 void I2C1_ERR_IRQHandler(void);
+void TMR7_GLOBAL_IRQHandler(void);
 /* add user code begin exported functions */
 
 /* add user code end exported functions */

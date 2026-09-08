@@ -48,6 +48,12 @@ extern C {
 #define SW6306_NTC_B                    3435
 #endif
 
+/* NTC 温度计算使能：1=启用（需 FPU/浮点 logf，SW6306_CalcNTCTemp_C/NTCTempLoad 会计算）。
+ * 无 FPU MCU 置 0 裁剪计算（不链接浮点代码；读取 API SW6306_ReadNTCTemp 仍可用，句柄不更新） */
+#ifndef SW6306_NTC_TEMP_CALC_EN
+#define SW6306_NTC_TEMP_CALC_EN         1
+#endif
+
 //输入输出最大功率设定，最大100W
 #define SW6306_INPUT_POWER_MAX          30U         //输入/充电功率，单位1W
 #define SW6306_OUTPUT_POWER_MAX         45U         //输出/放电功率，单位1W
@@ -120,6 +126,7 @@ struct SW6306_StatusTypedef
     uint16_t tntc;                  //NTC温度（精度太低，不建议使用）
     uint16_t tchip;                 //芯片温度
     uint16_t vntc;                  //NTC电压
+    float ntc_temp;                 //NTC温度（°C，由 VNTC/INTC Beta 公式计算；SW6306_NTCTempLoad 更新）
     //以上为原始数据，需要经过对应的Read()函数转换才有意义
     
     //状态寄存器区
@@ -568,8 +575,8 @@ struct SW6306_StatusTypedef
 
 //0xA2  SW6306_STRG_LEARN           容量学习状态指示
 #define SW6306_LEARN_MSK            0x60U//容量学习状态指示寄存器有效位
-#define SW6306_LEARN_ING            0x40U//容量学习进行中
-#define SW6306_LEARN_END            0x20U//容量学习已完成
+#define SW6306_LEARN_ING            0x40U//容量学习进行中（只读）
+#define SW6306_LEARN_END            0x20U//容量学习已完成标志（R/W，写0可清历史完成标志，非W1C）
 
 //0xA4  SW6306_CTRG_EXTSYS_STA      外部系统状态标志
 #define SW6306_EXTSYS_STA_MSK       0x0FU//外部系统状态标志寄存器有效位
@@ -1081,16 +1088,33 @@ struct SW6306_StatusTypedef
 #define SW6306_DPDM2_PE_12V         0x40U//PE协议最大电压12V
 #define SW6306_DPDM2_PE_9V          0x00U//PE协议最大电压9V
 
-//0x12B SW6306_CTRG_P_DPDM4         DPDM协议设置4
-#define SW6306_P_DPDM4_MSK          0x38U//DPDM协议设置4有效位
-#define SW6306_P_DPDM4_VOOC1        0x20U//VOOC 1.0协议使能
-#define SW6306_P_DPDM4_VOOC4        0x10U//VOOC 4.0协议使能
-#define SW6306_P_DPDM4_SVOOC        0x08U//Super VOOC协议使能
+//0x12A SW6306_CTRG_P_DPDM3         DPDM协议设置3（source 协议全局开关，V0.3.0）
+#define SW6306_P_DPDM3_MSK          0xFBU//DPDM协议设置3有效位（bit2保留）
+#define SW6306_P_DPDM3_NOQC2        0x80U//禁止QC2.0 source快充（0=使能/1=禁止）
+#define SW6306_P_DPDM3_NOQC3        0x40U//禁止QC3.0 source快充（0=使能/1=禁止）
+#define SW6306_P_DPDM3_NOQC3P       0x20U//禁止QC3+ source快充（0=使能/1=禁止）
+#define SW6306_P_DPDM3_NOFCP        0x10U//禁止FCP source快充（0=使能/1=禁止）
+#define SW6306_P_DPDM3_NOAFC        0x08U//禁止AFC source快充（0=使能/1=禁止）
+#define SW6306_P_DPDM3_NOSCP_HV     0x02U//禁止高压SCP source快充（0=使能/1=禁止）
+#define SW6306_P_DPDM3_NOSCP_LV     0x01U//禁止低压SCP source快充（0=使能/1=禁止）
 
-//0x12C SW6306_CTRG_P_DPDM5         DPDM协议设置5
-#define SW6306_P_DPDM5_MSK          0x11U//DPDM协议设置5有效位
-#define SW6306_P_DPDM5_VOOC         0x10U//VOOC充电使能
-#define SW6306_P_DPDM5_SDP2A        0x01U//SDP抽取2A电流
+//0x12B SW6306_CTRG_P_DPDM4         DPDM协议设置4（source 协议全局开关，V0.3.0）
+#define SW6306_P_DPDM4_MSK          0xFCU//DPDM协议设置4有效位（bit1:0保留）
+#define SW6306_P_DPDM4_NOPE         0x80U//禁止PE source快充（0=使能/1=禁止）
+#define SW6306_P_DPDM4_NOSFCP       0x40U//禁止SFCP source快充（0=使能/1=禁止）
+#define SW6306_P_DPDM4_VOOC1        0x20U//VOOC 1.0 source使能（active HIGH，1=使能/0=禁止）
+#define SW6306_P_DPDM4_VOOC4        0x10U//VOOC 4.0 source使能（active HIGH，1=使能/0=禁止）
+#define SW6306_P_DPDM4_SVOOC        0x08U//Super VOOC source使能（active HIGH，1=使能/0=禁止）
+#define SW6306_P_DPDM4_NOUFCS       0x04U//禁止UFCS source（0=使能/1=禁止）
+
+//0x12C SW6306_CTRG_P_DPDM5         DPDM协议设置5（sink 协议全局开关，V0.3.0）
+#define SW6306_P_DPDM5_MSK          0xF3U//DPDM协议设置5有效位（bit3:2保留）
+#define SW6306_P_DPDM5_NOUFCS       0x80U//禁止UFCS sink（0=使能/1=禁止）
+#define SW6306_P_DPDM5_NOAFC        0x40U//禁止AFC sink（0=使能/1=禁止）
+#define SW6306_P_DPDM5_NOSCP        0x20U//禁止SCP sink（0=使能/1=禁止）
+#define SW6306_P_DPDM5_VOOC         0x10U//VOOC sink使能（active HIGH，1=使能/0=禁止）
+#define SW6306_P_DPDM5_NOHVDCP      0x02U//禁止HVDCP sink（0=使能/1=禁止）
+#define SW6306_P_DPDM5_SDP2A        0x01U//SDP抽电电流（0=500mA/1=2A）
 
 //0x12D SW6306_CTRG_P_UFCS          UFCS协议设置
 #define SW6306_P_UFCS_CFG_MSK       0x78U//UFCS协议设置有效位
@@ -1243,6 +1267,38 @@ struct SW6306_StatusTypedef
 #define SW6306_FAULT3_62368_NOUTP   0x01U//禁止充电62368低温保护
 
 /*****************************函数声明区***************************************/
+/* ============ 端口/协议枚举（供 PORTQC 端口快充与全局协议开关使用） ============ */
+typedef enum {
+    SW6306_PORT_C1,
+    SW6306_PORT_C2,
+    SW6306_PORT_A1,
+    SW6306_PORT_A2
+} sw6306_port_t;
+
+typedef enum {
+    SW6306_PORT_DIR_IN,     /* 输入方向（仅 C 口支持） */
+    SW6306_PORT_DIR_OUT     /* 输出方向 */
+} sw6306_port_dir_t;
+
+typedef enum {
+    SW6306_PROTO_DIR_SOURCE,
+    SW6306_PROTO_DIR_SINK
+} sw6306_proto_dir_t;
+
+typedef enum {
+    SW6306_PROTO_PD,        /* USB PD */
+    SW6306_PROTO_PPS,       /* PD PPS（仅 source） */
+    SW6306_PROTO_QC,        /* QC2/QC3/QC3+ */
+    SW6306_PROTO_FCP,
+    SW6306_PROTO_AFC,
+    SW6306_PROTO_SCP,
+    SW6306_PROTO_PE,
+    SW6306_PROTO_SFCP,
+    SW6306_PROTO_VOOC,
+    SW6306_PROTO_SVOOC,
+    SW6306_PROTO_UFCS
+} sw6306_proto_t;
+
 //ADC数据相关操作
 SW6306_RET SW6306_ADCLoad(SW6306_NOARG);      //读取全部ADC数据并更新镜像寄存器
 uint16_t SW6306_ReadVBUS(void);                 //读取BUS电压
@@ -1254,22 +1310,32 @@ float SW6306_ReadTCHIP(void);                   //读取芯片温度
 float SW6306_ReadVNTC(void);                    //读取NTC电压
 float SW6306_ReadNTCResistance_Ohm(void);       //由 VNTC 与 INTC 反算 Rntc
 float SW6306_TNTC_Calc(void);                   //由 Rntc 用 Beta 公式算温度(°C)
+float SW6306_CalcNTCTemp_C(void);               //计算 NTC 温度（°C，Beta 公式；独立 API，无 FPU 平台可裁剪）
+float SW6306_ReadNTCTemp(void);                 //读取句柄中的 NTC 温度（°C，Beta 公式计算）
+SW6306_RET SW6306_NTCTempLoad(SW6306_NOARG);    //计算并缓存 NTC 温度到句柄（须先 ADCLoad+StatusLoad）
 //状态相关操作
 SW6306_RET SW6306_StatusLoad(SW6306_NOARG);   //将SW6306的各种状态读取到镜像寄存器(0x12,0x14,0x15,0x18,0x1A,0x2A,0x2B,0x2C)
 uint8_t SW6306_IsWLEDON(void);                  //SW6306 WLED是否打开
 uint8_t SW6306_IsDisplaying(void);              //SW6306显示是否打开（似乎是一直有效的）
 uint8_t SW6306_IsLowCurrentMode(void);          //SW6306是否处于小电流模式
 uint8_t SW6306_IsMPPTCharging(void);            //SW6306是否处于MPPT充电模式
-uint8_t SW6306_IsCharging(void);                //SW6306是否正在充电
-uint8_t SW6306_IsDischarging(void);             //SW6306是否正在放电
-uint8_t SW6306_IsFullCharged(void);             //SW6306是否充满
-uint8_t SW6306_IsBatteryDepleted(void);         //SW6306电池是否耗尽
-uint8_t SW6306_IsCapacityLearned(void);         //是否已完成电量学习
-uint8_t SW6306_IsErrorinCharging(void);         //充电是否出现异常
-uint8_t SW6306_IsErrorinDischarging(void);      //放电是否出现异常
-uint8_t SW6306_IsKeyEvent(void);                //是否触发了按键事件
-uint8_t SW6306_IsSceneChanged(void);            //是否发生场景变化
-uint8_t SW6306_IsOverHeated(void);              //是否发生过温异常
+uint8_t SW6306_IsCharging(void);                //SW6306是否正在充电（REG0x18实时）
+uint8_t SW6306_IsDischarging(void);             //SW6306是否正在放电（REG0x18实时）
+//实时状态（REG0x18 / ADC采样）
+uint8_t SW6306_IsChargeStoppedByFault(void);    //REG0x18.bit7 异常导致充电关闭（实时）
+uint8_t SW6306_IsDischargeStoppedByFault(void); //REG0x18.bit6 异常导致放电关闭（实时）
+//历史事件（REG0x15/0x2A/0x2B，处理完后用SW6306_ClearEvents清除）
+uint8_t SW6306_HasUVLOEvent(void);              //REG0x15.bit4 曾发生UVLO事件
+uint8_t SW6306_HasChargeErrorEvent(void);       //REG0x15.bit3 曾发生充电异常事件
+uint8_t SW6306_HasDischargeErrorEvent(void);    //REG0x15.bit2 曾发生放电异常事件
+uint8_t SW6306_HasFullChargeEvent(void);        //REG0x2B.bit5 曾发生充满事件（下次开机清零）
+uint8_t SW6306_HasKeyEvent(void);               //REG0x15.bit1 曾发生按键事件
+uint8_t SW6306_HasSceneEvent(void);             //REG0x15.bit0 曾发生场景变化事件
+SW6306_RET SW6306_ClearEvents(SW6306_ARGS(uint8_t events)); //写1清除REG0x15已处理的事件位（W1C）
+uint8_t SW6306_ReadEventFlags(void);            //读取REG0x15原始事件值
+uint8_t SW6306_ReadFaultDischarge(void);        //读取REG0x2A放电异常历史原因
+uint8_t SW6306_ReadFaultCharge(void);           //读取REG0x2B充电异常历史原因
+uint8_t SW6306_ReadSystemStatus(void);          //读取REG0x18系统实时状态
 //端口状态相关操作
 SW6306_RET SW6306_PortStatusLoad(SW6306_NOARG); //更新端口状态镜像寄存器(0x13,0x18,0x19,0x1C,0x1D)
 uint8_t SW6306_IsPortC1ON(void);                //读取C1口通路是否打开
@@ -1282,12 +1348,42 @@ uint16_t SW6306_ReadIPortLimit(void);           //读取充电时端口限流实
 uint16_t SW6306_ReadIBattLimit(void);           //读取充电时电池限流实时值（单位：mA）
 uint8_t SW6306_ReadMaxOutputPower(void);        //读取最大输出功率（单位：W）
 uint8_t SW6306_ReadMaxInputPower(void);         //读取最大输入功率（单位：W）
+uint8_t SW6306_ReadPiMaxSet(void);              //读取PISET设置值（0x45，PowerLoad后更新，单位：W）
+uint8_t SW6306_ReadPoMaxSet(void);              //读取POSET设置值（0x4F，PowerLoad后更新，单位：W）
+SW6306_RET SW6306_SetMaxOutputPower(SW6306_ARGS(uint8_t watt)); //设置最大输出功率（单位W，如45/18）
+uint8_t SW6306_GetMaxOutputPowerSetting(void);  //读取当前目标最大输出功率（W）
 const char *SW6306_ReadProtocol(void);          //读取协议名称字符串
+/* 端口快充总开关（0x11F PORTQC，0=使能/1=禁止；A 口仅输出方向） */
+SW6306_RET SW6306_PortFastChargeSet(SW6306_ARGS(sw6306_port_t port, sw6306_port_dir_t dir, uint8_t enable));
+/* 全局协议开关（source/sink；PD/PPS 已实现；QC/FCP/AFC/SCP/PE/SFCP/VOOC/SVOOC/UFCS 位定义待补） */
+SW6306_RET SW6306_ProtocolEnable(SW6306_ARGS(sw6306_proto_t proto, sw6306_proto_dir_t dir, uint8_t enable));
+/* PPS 档位开关：只提供 PPS1/PPS3（PPS0/PPS2 始终不使用，由 Init 禁止） */
+typedef enum {
+    SW6306_PPS_1 = 0,   /* PPS1（最大 11V） */
+    SW6306_PPS_3        /* PPS3（最大 21V） */
+} sw6306_pps_t;
+SW6306_RET SW6306_PPSEnable(SW6306_ARGS(sw6306_pps_t pps, uint8_t enable)); //使能/禁止指定 PPS 档位（0x134 PD1）
+SW6306_RET SW6306_SetMaxInputPower(SW6306_ARGS(uint8_t watt));              //设置最大输入功率（单位W，如30/18；写 PISET 0x45）
+SW6306_RET SW6306_PPSBroadcast(SW6306_NOARG);   //手动触发 PD/PPS 电流能力播发（Source Capability 重播）
+SW6306_RET SW6306_UFCSBroadcast(SW6306_NOARG);  //手动触发 UFCS 电流能力播发（Source Capability 重播）
 //容量与库仑计相关操作
 SW6306_RET SW6306_CapacityLoad(SW6306_NOARG); //更新容量与库仑计镜像寄存器(0x86~0x8A,0x99,0xA2)
 uint8_t SW6306_ReadCapacity(void);              //读取SW6306显示电量
-float SW6306_ReadMaxGuageCap(void);             //读取库仑计最大容量（单位：mAh）
-float SW6306_ReadPresentGuageCap(void);         //读取库仑计当前容量（单位：mAh）
+float SW6306_ReadMaxEnergy_mWh(void);           //读取库仑计最大能量（单位：mWh）
+float SW6306_ReadRemainEnergy_mWh(void);        //读取库仑计当前（剩余）能量（单位：mWh）
+/* 容量学习状态（0xA2 两位组合，bit5=END 在前为高位、bit6=ING 为低位）：
+ * 00 等待学习 Waiting / 01 学习中 Learning / 10 完成 Done / 11 共存(不存在) Unknown
+ * 注意：成员名带 ST 前缀，避免与 SW6306_LEARN_ING/END 位宏冲突。 */
+typedef enum {
+    SW6306_LEARN_ST_WAITING = 0,
+    SW6306_LEARN_ST_ING     = 1,
+    SW6306_LEARN_ST_DONE    = 2,
+    SW6306_LEARN_ST_UNKNOWN = 3,
+} sw6306_learn_state_t;
+sw6306_learn_state_t SW6306_ReadLearnState(void);   //读取容量学习状态（0xA2 镜像，3 态 + Unknown）
+/* 容量学习武装：使能 0x14E[4] LEARNEN + 写 0xA2[5]=0 清历史完成标志。
+ * 注意：SW6306 实际学习在「触发 UVLO 后再次开始充电」时启动，本函数只重新武装状态，不保证立即开始。 */
+SW6306_RET SW6306_CapacityLearningSet(SW6306_ARGS(uint8_t enable)); //容量学习使能/失能（1=武装使能+清历史标志，0=关闭）
 //状态操作
 SW6306_RET SW6306_ForceOff(SW6306_NOARG);     //强制关闭放电并休眠
 SW6306_RET SW6306_Unlock(SW6306_NOARG);       //解除低功耗，解锁SW6306的寄存器写入
@@ -1319,6 +1415,7 @@ SW6306_RET SW6306_IbusForceCtrlSet(SW6306_ARGS(uint8_t status));    //设置是�
 //初始化
 SW6306_RET SW6306_Init(SW6306_NOARG);         //初始化，最好系统上电后立刻执行
 uint8_t SW6306_IsInitialized(void);             //检测SW6306是否已初始化过，须在SW6306_PowerLoad()后执行
+SW6306_RET SW6306_MarkUninitialized(SW6306_NOARG); //手动失能已初始化标志（供 UI 调用；是否重新 Init 由读回配置判定）
 
 #ifdef __cplusplus
 }

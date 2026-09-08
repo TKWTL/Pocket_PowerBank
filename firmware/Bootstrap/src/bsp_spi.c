@@ -18,7 +18,8 @@ void GSPI_Transmit(uint8_t* p_buf, size_t len){
     dma_data_number_set(GSPI_DMACH, len);/* 5) 设置传输长度 */
     dma_channel_enable(GSPI_DMACH, TRUE);/* 6) 使能 DMA 通道，等待 SPI3_TX DMA 请求触发搬运 */
 
-    (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);   /* DMA 搬完 */
+    while (spi_i2s_flag_get(GSPI, SPI_I2S_BF_FLAG)) {}   /* 等 SPI 最后一位真正从 MOSI 发出 */
     gspi_wait_task = NULL;
     
     xSemaphoreGive(mutex_gspi_handle);

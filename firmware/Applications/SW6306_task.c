@@ -1,40 +1,24 @@
 #include "applications.h"
 
-#include "at32f423_wk_config.h"
-
-#include "framework/pm_api.h"
-
-#include <stdarg.h>
-
-static void usart_printf(const char *format, ...)
-{
-    char buf[64];
-    uint8_t i;
-    va_list arg;
-
-    va_start(arg, format);
-    vsprintf(buf, format, arg);
-    va_end(arg);
-
-    for (i = 0; i < 64; i++) {
-        if (buf[i] == 0x00) {
-            break;
-        }
-        while (usart_flag_get(USART1, USART_TDBE_FLAG) == RESET) {
-        }
-        usart_data_transmit(USART1, buf[i]);
-    }
-}
-
 static void sw6306_update_sleep_block(void)
 {
     uint8_t port_on;
     uint8_t curr_busy;
+    uint8_t bus_active;
 
+    /* 任意端口通路打开（本硬件真实口：C1/A1；A1 兼作 WLED 假插入口） */
     port_on = (SW6306_IsPortC1ON() != 0 || SW6306_IsPortA1ON() != 0) ? 1 : 0;
+    /* 任意充/放电电流 */
     curr_busy = (SW6306_ReadIBUS() > 50 || SW6306_ReadIBAT() > 50) ? 1 : 0;
+    /* 总线有压且有电流 = 充电/放电活跃，不依赖端口 ON 位（防端口位漏检误入睡） */
+    bus_active = (SW6306_ReadVBUS() > 4000 && SW6306_ReadIBUS() > 50) ? 1 : 0;
 
-    if (port_on != 0 && curr_busy != 0) {
+    /* 充满后不再阻止休眠：充满→充电电流归零（IBUS<50）→ 走 30s 空闲入睡，
+     * 避免 MCU 空转消耗电池电量（该电流不经 SW6306 库仑计，会虚增 SOC）。
+     * 入睡后 SW6306 进入 LPSet；拔下充电器（VBUS 掉电）属场景变化，
+     * SCENE 事件经 IRQ(EXINT8) 拉低 10ms 唤醒 MCU 一次用于查看电量，
+     * 空载 30s 后再次入睡。 */
+    if ((port_on != 0 && curr_busy != 0) || bus_active != 0) {
         pm_api_set_sleep_block(PM_BLOCK_SW6306_LOAD, 1);
         pm_api_refresh_idle();
     } else {
@@ -42,39 +26,58 @@ static void sw6306_update_sleep_block(void)
     }
 }
 
+/* 睡眠门控检查：置位则让出（停止 I2C 读写），返回 1=被门控 */
+static uint8_t sw6306_gate_check(void)
+{
+    if (pm_api_sleep_gate_get() != 0) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return 1;
+    }
+    return 0;
+}
+
 void SW6306_task_func(void *pvParameters)
 {
     (void)pvParameters;
     uint8_t i = 0;
-
+        
     while (1) {
+        if (sw6306_gate_check()) continue;
+        vTaskDelay(100);
+        if (sw6306_gate_check()) continue;
+        SW6306_ADCLoad();
+        vTaskDelay(100);
+        if (sw6306_gate_check()) continue;
+        SW6306_StatusLoad();
+        /* 由 VNTC/INTC 计算 NTC 温度并更新句柄（供 UI/菜单读取） */
+        SW6306_NTCTempLoad();
+        vTaskDelay(100);
+        if (sw6306_gate_check()) continue;
+        SW6306_PortStatusLoad();
+        vTaskDelay(200);
+        if (sw6306_gate_check()) continue;
+        SW6306_PowerLoad();
+        SW6306_CapacityLoad();
+
         if (SW6306_IsInitialized() == 0) {
+            USART_Printf("[SW6306] Re-Inited.\n");
             SW6306_ForceOff();
             SW6306_Init();
             SW6306_IextEnSet(0);
             SW6306_IextDirSet(1);
-            SW6306_IextSet(20);
+            SW6306_IextSet(10);
         }
-        vTaskDelay(100);
-        SW6306_ADCLoad();
-        vTaskDelay(100);
-        SW6306_StatusLoad();
-        vTaskDelay(100);
-        SW6306_PortStatusLoad();
-        vTaskDelay(200);
-        SW6306_PowerLoad();
-        SW6306_CapacityLoad();
 
         sw6306_update_sleep_block();
 
         if (i == 0) {
-            usart_printf("VBUS:%dmV\tIBUS:%dmA\tPBUS:%.3fW\n", SW6306_ReadVBUS(), SW6306_ReadIBUS(), SW6306_ReadVBUS() * SW6306_ReadIBUS() * 0.000001f);
+            USART_Printf("VBUS:%dmV\tIBUS:%dmA\tPBUS:%.3fW\n", SW6306_ReadVBUS(), SW6306_ReadIBUS(), SW6306_ReadVBUS() * SW6306_ReadIBUS() * 0.000001f);
         }
         if (i == 1) {
-            usart_printf("VBAT:%dmV\tIBAT:%dmA\tPBAT:%.3fW\n", SW6306_ReadVBAT(), SW6306_ReadIBAT(), SW6306_ReadVBAT() * SW6306_ReadIBAT() * 0.000001f);
+            USART_Printf("VBAT:%dmV\tIBAT:%dmA\tPBAT:%.3fW\n", SW6306_ReadVBAT(), SW6306_ReadIBAT(), SW6306_ReadVBAT() * SW6306_ReadIBAT() * 0.000001f);
         }
         if (i == 2) {
-            usart_printf("TChip:%.1f'C\tCap:%d%%\n\n", SW6306_ReadTCHIP(), SW6306_ReadCapacity());
+            USART_Printf("TChip:%.1fC\tBatCap:%d%%\tSleep:%lums\n\n", SW6306_ReadTCHIP(), SW6306_ReadCapacity(), pm_sleep_timer_left_ms());
         }
         if (i == 4) {
             i = 0;

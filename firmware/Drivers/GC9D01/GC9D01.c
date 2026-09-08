@@ -497,15 +497,18 @@ static void GC9D01_RowSet(uint16_t RowStart, uint16_t RowEnd){
 
 
 //==============================================================================
-// Процедура управления подсветкой (ШИМ)
+// Процедура управления подсветкой (ШИМ) — TMR1 CH4 (PA11)
+// 电路为 PWM 下拉点亮 LED，因此比较值取反：0 = 最暗, 255 = 最亮
 //==============================================================================
 void GC9D01_SetBL(uint8_t Value){
-	
-//  if (Value > 100)
-//    Value = 100;
+    uint16_t compare;
 
-//	tmr2_PWM_set(ST77xx_PWM_TMR2_Chan, Value);
-
+    /* Value 0~255 映射到 TMR1 CH4 比较值 1023~3 (取反)
+     * Value=0 → 1023 (几乎恒高, LED 灭)
+     * Value=255 → 3 (几乎恒低, LED 最亮) */
+    compare = 1023U - ((uint16_t)Value * 4U);
+    if (compare > 1023U) compare = 0U;
+    tmr_channel_value_set(TMR1, TMR_SELECT_CHANNEL_4, compare);
 }
 //==============================================================================
 

@@ -294,10 +294,11 @@ static void mouse_get_xy(int32_t * x, int32_t * y)
 /*Initialize your keypad*/
 static void keypad_init(void)
 {
-    lv_group_t * group = lv_group_create();
-// 这里的变量“indev_keypad”在文件顶部“STATIC VARIABLES”区有定义
-// 这句话要加入void lv_port_indev_init(void)；函数对应的keypad的代码里
-lv_indev_set_group(indev_keypad, group);
+    /* 注意：这里不能创建/绑定 group。
+     * keypad_init() 在 lv_port_indev_init() 中被调用时，indev_keypad 尚未创建
+     * （lv_indev_create() 在其后执行），此时 lv_indev_set_group(NULL, group)
+     * 是无操作，创建的 group 会被孤立浪费。
+     * group 的创建与绑定已由 ui_task.c 完成（lv_group_create + lv_indev_set_group）。 */
     /*Your code comes here*/
 }
 
@@ -410,7 +411,7 @@ static bool button_is_pressed(uint8_t id)
 {
 
     /*Your code comes here*/
-    if(KEY_GetState(i) == KeyState_ShortPress) return 1;
+    if(KEY_GetState((KeyIndex_t)id) == KeyState_ShortPress) return 1;
     else return false;
 }
 #endif

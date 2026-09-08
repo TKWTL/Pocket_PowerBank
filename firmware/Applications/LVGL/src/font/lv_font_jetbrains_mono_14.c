@@ -649,7 +649,9 @@ lv_font_t lv_font_jetbrains_mono_14 = {
     .static_bitmap = 0,
     .dsc = &font_dsc,          /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
 #if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9
-    .fallback = &lv_font_jetbrains_mono_14,
+    /* FIX: fallback 自环（指向自己）会让 lv_font_get_glyph_dsc() 的 while(f) 无限循环，
+     * 导致渲染缺字形字符（如中文）时 ui_task 卡死。必须为 NULL。 */
+    .fallback = NULL,
 #endif
     .user_data = NULL,
 };

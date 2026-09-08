@@ -43,20 +43,24 @@ extern TaskHandle_t ui_task_handle;
 extern TaskHandle_t powerdown_task_handle;
 extern TaskHandle_t button_task_handle;
 extern TaskHandle_t SW6306_task_handle;
+extern TaskHandle_t Load_Task_handle;
 /* variables for task tcb and stack */
-extern StackType_t my_task01_stack[768];
-extern StackType_t my_task02_stack[128];
-extern StackType_t my_task03_stack[64];
-extern StackType_t my_task04_stack[128];
+extern StackType_t my_task01_stack[1280];
+extern StackType_t my_task02_stack[256];
+extern StackType_t my_task03_stack[128];
+extern StackType_t my_task04_stack[256];
+extern StackType_t my_task05_stack[256];
 extern StaticTask_t my_task01_buffer;
 extern StaticTask_t my_task02_buffer;
 extern StaticTask_t my_task03_buffer;
 extern StaticTask_t my_task04_buffer;
+extern StaticTask_t my_task05_buffer;
 /* declaration for task function */
 void ui_task_func(void *pvParameters);
 void powerdown_task_func(void *pvParameters);
 void button_task_func(void *pvParameters);
 void SW6306_task_func(void *pvParameters);
+void load_task(void *pvParameters);
 
 /* mutex handler */
 extern SemaphoreHandle_t mutex_i2c_handle;

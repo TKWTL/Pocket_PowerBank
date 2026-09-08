@@ -48,7 +48,7 @@
             <InvalidFlash>1</InvalidFlash>
           </TargetStatus>
           <OutputDirectory>.\objects\</OutputDirectory>
-          <OutputName>AT32F423KCU7-4_Bootstrap</OutputName>
+          <OutputName>Pocket_powerBank</OutputName>
           <CreateExecutable>1</CreateExecutable>
           <CreateLib>0</CreateLib>
           <CreateHexFile>1</CreateHexFile>
@@ -57,7 +57,7 @@
           <ListingPath>.\listings\</ListingPath>
           <HexFormatSelection>1</HexFormatSelection>
           <Merge32K>0</Merge32K>
-          <CreateBatchFile>1</CreateBatchFile>
+          <CreateBatchFile>0</CreateBatchFile>
           <BeforeCompile>
             <RunUserProg1>0</RunUserProg1>
             <RunUserProg2>0</RunUserProg2>
@@ -332,14 +332,14 @@
             <v6LangP>3</v6LangP>
             <vShortEn>1</vShortEn>
             <vShortWch>1</vShortWch>
-            <v6Lto>0</v6Lto>
+            <v6Lto>1</v6Lto>
             <v6WtE>0</v6WtE>
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls></MiscControls>
               <Define>AT32F423KCU7_4, USE_STDPERIPH_DRIVER, AT_START_F423_V1, LV_LVGL_H_INCLUDE_SIMPLE, LV_CONF_INCLUDE_SIMPLE</Define>
               <Undefine></Undefine>
-              <IncludePath>..\..\libraries\drivers\inc;..\..\libraries\cmsis\cm4\core_support;..\..\libraries\cmsis\cm4\device_support;..\inc;..\..\Bootstrap\inc;..\..\Drivers\GC9D01;..\..\Drivers\SW6306;..\..\Applications\LVGL;..\..\Applications\LVGL\porting;..\..\Applications\LVGL\src;..\..\Applications\LVGL\src\tick;..\..\Applications;..\..\Drivers\Buttons;../../middlewares/freertos/source/include;../../middlewares/freertos/source/portable/memmang;../../middlewares/freertos/source/portable/GCC/ARM_CM4F;../../middlewares/i2c_application_library;..\..\Applications\framework</IncludePath>
+              <IncludePath>..\..\libraries\drivers\inc;..\..\libraries\cmsis\cm4\core_support;..\..\libraries\cmsis\cm4\device_support;..\inc;..\..\Bootstrap\inc;..\..\Drivers;..\..\Drivers\GC9D01;..\..\Drivers\SW6306;..\..\Drivers\SC7A20;..\..\Drivers\SD3078;..\..\Applications\LVGL;..\..\Applications\LVGL\porting;..\..\Applications\LVGL\src;..\..\Applications\LVGL\src\tick;..\..\Applications;..\..\Applications\menu;..\..\Applications\functions;..\..\Drivers\Buttons;..\..\Drivers\WLED;..\..\Applications\framework;../../middlewares/freertos/source/include;../../middlewares/freertos/source/portable/memmang;../../middlewares/freertos/source/portable/GCC/ARM_CM4F;../../middlewares/i2c_application_library</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -1274,9 +1274,9 @@
               <FilePath>..\..\Applications\LVGL\src\font\lv_font_source_han_sans_sc_16_cjk.c</FilePath>
             </File>
             <File>
-              <FileName>lv_font_jetbrains_mono_14.c</FileName>
+              <FileName>font-terminus-u14b.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\..\Applications\LVGL\src\font\lv_font_jetbrains_mono_14.c</FilePath>
+              <FilePath>..\..\Applications\LVGL\src\font\font-terminus-u14b.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -2644,9 +2644,109 @@
               <FilePath>..\..\Drivers\SW6306\sw6306.c</FilePath>
             </File>
             <File>
+              <FileName>sd3078.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Drivers\SD3078\sd3078.c</FilePath>
+            </File>
+            <File>
+              <FileName>sc7a20.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Drivers\SC7A20\sc7a20.c</FilePath>
+            </File>
+            <File>
               <FileName>buttons.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\Drivers\Buttons\buttons.c</FilePath>
+            </File>
+            <File>
+              <FileName>wled.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Drivers\WLED\wled.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Menu</GroupName>
+          <Files>
+            <File>
+              <FileName>menu.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\menu\menu.c</FilePath>
+            </File>
+            <File>
+              <FileName>menu_icons.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\menu\menu_icons.c</FilePath>
+            </File>
+            <File>
+              <FileName>menu_pages.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\menu\menu_pages.c</FilePath>
+            </File>
+            <File>
+              <FileName>menu_theme.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\menu\menu_theme.c</FilePath>
+            </File>
+            <File>
+              <FileName>menu_ui.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\menu\menu_ui.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>services</GroupName>
+          <Files>
+            <File>
+              <FileName>pm_controller.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_controller.c</FilePath>
+            </File>
+            <File>
+              <FileName>pm_device.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_device.c</FilePath>
+            </File>
+            <File>
+              <FileName>pm_device_builtin.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_device_builtin.c</FilePath>
+            </File>
+            <File>
+              <FileName>pm_policy.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_policy.c</FilePath>
+            </File>
+            <File>
+              <FileName>pm_sleep_timer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\pm_sleep_timer.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Functions</GroupName>
+          <Files>
+            <File>
+              <FileName>main_screen.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\functions\main_screen.c</FilePath>
+            </File>
+            <File>
+              <FileName>main_icons.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\functions\main_icons.c</FilePath>
+            </File>
+            <File>
+              <FileName>reset.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\functions\reset.c</FilePath>
+            </File>
+            <File>
+              <FileName>screen_test.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\functions\screen_test.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -2672,6 +2772,11 @@
               <FileName>powerdown_task.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\Applications\powerdown_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>load_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\load_task.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -2722,36 +2827,6 @@
               <FileName>stream_buffer.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../middlewares/freertos/source/stream_buffer.c</FilePath>
-            </File>
-          </Files>
-        </Group>
-        <Group>
-          <GroupName>services</GroupName>
-          <Files>
-            <File>
-              <FileName>pm_controller.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\..\Applications\framework\pm_controller.c</FilePath>
-            </File>
-            <File>
-              <FileName>pm_device.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\..\Applications\framework\pm_device.c</FilePath>
-            </File>
-            <File>
-              <FileName>pm_device_builtin.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\..\Applications\framework\pm_device_builtin.c</FilePath>
-            </File>
-            <File>
-              <FileName>pm_policy.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\..\Applications\framework\pm_policy.c</FilePath>
-            </File>
-            <File>
-              <FileName>pm_sleep_timer.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\..\Applications\framework\pm_sleep_timer.c</FilePath>
             </File>
           </Files>
         </Group>

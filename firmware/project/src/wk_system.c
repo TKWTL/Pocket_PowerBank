@@ -84,14 +84,15 @@ __WEAK void wk_timebase_init(void)
   /* get crm_clocks */
   crm_clocks_freq_get(&crm_clocks);
 
-  frequency = crm_clocks.ahb_freq;
-  /* config systick clock source */
-  systick_clock_source_config(SYSTICK_CLOCK_SOURCE_AHBCLK_NODIV);
-  /* system tick config */
-  SysTick->LOAD  = (uint32_t)((frequency / 1000) - 1UL);
-  SysTick->VAL   = 0UL;
-  SysTick->CTRL |= SysTick_CTRL_TICKINT_Msk |
-                   SysTick_CTRL_ENABLE_Msk;
+  frequency = crm_clocks.apb1_freq * 2;
+  /* time base configuration */
+  tmr_base_init(TMR7, ((1000000U / 1000U) - 1), ((frequency / 1000000U) - 1));
+
+  tmr_cnt_dir_set(TMR7, TMR_COUNT_UP);
+  /* overflow interrupt enable */
+  tmr_interrupt_enable(TMR7, TMR_OVF_INT, TRUE);
+  /* enable timer */
+  tmr_counter_enable(TMR7, TRUE);
 }
 
 /**
@@ -101,6 +102,10 @@ __WEAK void wk_timebase_init(void)
   */
 __WEAK void wk_timebase_handler(void)
 {
-  wk_timebase_increase();
+  if(tmr_interrupt_flag_get(TMR7, TMR_OVF_FLAG) == SET)
+  {
+    tmr_flag_clear(TMR7, TMR_OVF_FLAG);
+    wk_timebase_increase();
+  }
 }
 

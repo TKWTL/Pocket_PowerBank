@@ -82,9 +82,22 @@ SD3078_RET SD3078_Lock(SD3078_NOARG)
 */
 SD3078_RET SD3078_TimeLoad(SD3078_NOARG)
 {
+    uint8_t t[7];                    /* 读缓冲：失败时镜像保持上一次有效值（不写入半帧数据） */
     SD3078_FUNC_BEGIN;
     SD3078_MUTEX_TAKE;
-    SD3078_SPAWN_ARGS(SD3078_BytesRead, SD3078_STRG_SEC, &SD3078_Status.sec, 7);
+    if(SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_SEC, t, 7, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
+    {
+        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SD3078_MUTEX_GIVE;
+        SD3078_FUNC_END;
+    }
+    SD3078_Status.sec   = t[0];
+    SD3078_Status.min   = t[1];
+    SD3078_Status.hour  = t[2];
+    SD3078_Status.week  = t[3];
+    SD3078_Status.day   = t[4];
+    SD3078_Status.month = t[5];
+    SD3078_Status.year  = t[6];
     /* 24小时制下屏蔽小时寄存器12_/24位（作用于BCD镜像） */
     SD3078_Status.hour &= ~SD3078_HOUR_1224;
     /* 保留原始BCD镜像的同时转换为十进制，SD3078_Read*()直接返回十进制 */
@@ -324,9 +337,16 @@ uint8_t SD3078_HasAlarm(void)//查询报警中断标志（INTAF）
 /******************************温度操作区**************************************/
 SD3078_RET SD3078_TempLoad(SD3078_NOARG)//读取温度镜像（0x16）
 {
+    volatile uint8_t t = 0U;         /* 读缓冲：失败时不改动镜像 */
     SD3078_FUNC_BEGIN;
     SD3078_MUTEX_TAKE;
-    SD3078_SPAWN_ARGS(SD3078_ByteRead, SD3078_STRG_TEMP, (volatile uint8_t*)&SD3078_Status.temp);
+    if(SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_TEMP, (uint8_t*)&t, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
+    {
+        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SD3078_MUTEX_GIVE;
+        SD3078_FUNC_END;
+    }
+    SD3078_Status.temp = (int8_t)t;
     SD3078_MUTEX_GIVE;
     SD3078_FUNC_END;
 }
@@ -360,10 +380,18 @@ SD3078_RET SD3078_TempHistoryLoad(SD3078_NOARG)//读取历史高低温值（0x1E
 /******************************电池与充电操作区********************************/
 SD3078_RET SD3078_BattLoad(SD3078_NOARG)//读取电池电压镜像（1AH/1BH合成9位）
 {
+    volatile uint8_t ctr5 = 0U, bval = 0U;   /* 读缓冲：失败时不改动镜像 */
     SD3078_FUNC_BEGIN;
     SD3078_MUTEX_TAKE;
-    SD3078_SPAWN_ARGS(SD3078_ByteRead, SD3078_STRG_CTR5, &SD3078_Status.ctr5);
-    SD3078_SPAWN_ARGS(SD3078_ByteRead, SD3078_STRG_BAT_VAL, SD3078_Status.sendbuf);
+    if(SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_CTR5, (uint8_t*)&ctr5, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK
+       || SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_BAT_VAL, (uint8_t*)&bval, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
+    {
+        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SD3078_MUTEX_GIVE;
+        SD3078_FUNC_END;
+    }
+    SD3078_Status.ctr5 = ctr5;
+    SD3078_Status.sendbuf[0] = bval;
     //9位数据：1AH[7](BAT8_VAL)<<8 | 1BH(VBAT_VAL)，如130H=304=3.04V
     SD3078_Status.batt = ((uint16_t)(SD3078_Status.ctr5 & SD3078_CTR5_BAT8_VAL) << 1) | SD3078_Status.sendbuf[0];
     SD3078_MUTEX_GIVE;

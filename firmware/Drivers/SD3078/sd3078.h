@@ -17,6 +17,18 @@ extern C {
 //  - 已定义：协作式 API（返回类型为 char，并额外带 struct pt *pt 参数）。
 //#define SD3078_USE_PROTOTHREAD
 
+/* 器件离线判定总开关（2026-09 临时屏蔽）：I²C 读失败是否把器件判离线并触发重新初始化。
+ * 置 1：不因 I²C 失败置离线（当前 PCB 布线干扰强，避免被反复重初始化）。
+ * 置 0：原行为。 */
+#ifndef SD3078_I2C_FAIL_MARK_OFFLINE
+#define SD3078_I2C_FAIL_MARK_OFFLINE    1           //1=屏蔽"I²C 失败→置离线"（当前 PCB 布线整改前的临时状态）；0=恢复自动重新初始化
+#endif
+#if SD3078_I2C_FAIL_MARK_OFFLINE
+#define SD3078_MARK_OFFLINE_ON_I2C_FAIL()   do {} while(0)
+#else
+#define SD3078_MARK_OFFLINE_ON_I2C_FAIL()   do { SD3078_Status.online = 0; SD3078_Status.initialized = 0; } while(0)
+#endif
+
 /*包含自己的I2C驱动库*/
 #include "bsp_i2c.h"
         

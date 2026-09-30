@@ -1868,6 +1868,11 @@ i2c_status_type i2c_master_irq_handler_int(i2c_handle_type* hi2c)
     }
     else
     {
+      /* [BUGFIX] 原实现只 return I2C_ERR_TCRLD：异常标志未清、中断未关，
+       * 会与 TDC 异常同源地反复进入本 ISR（中断风暴）→ 整机假死。
+       * 关闭本事务整组中断并记录错误码，由上层复位总线恢复。 */
+      i2c_interrupt_enable(hi2c->i2cx, I2C_ERR_INT | I2C_TDC_INT | I2C_STOP_INT | I2C_ACKFIAL_INT | I2C_TD_INT | I2C_RD_INT, FALSE);
+      hi2c->error_code = I2C_ERR_TCRLD;
       return I2C_ERR_TCRLD;
     }
   }
@@ -1890,6 +1895,12 @@ i2c_status_type i2c_master_irq_handler_int(i2c_handle_type* hi2c)
     }
     else
     {
+      /* [BUGFIX] 原实现只 return I2C_ERR_TDC：既不清 TDC 标志也不关 TDC 中断，
+       * TDC 持续置位 → CPU 反复进入本 ISR（中断风暴）→ 任务全部饿死（整机假死，
+       * 任务侧超时恢复机制也因无法运行而失效）。
+       * 关闭本事务整组中断并记录错误码，由上层复位总线恢复。 */
+      i2c_interrupt_enable(hi2c->i2cx, I2C_ERR_INT | I2C_TDC_INT | I2C_STOP_INT | I2C_ACKFIAL_INT | I2C_TD_INT | I2C_RD_INT, FALSE);
+      hi2c->error_code = I2C_ERR_TDC;
       return I2C_ERR_TDC;
     }
   }

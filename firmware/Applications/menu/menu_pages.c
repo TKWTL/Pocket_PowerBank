@@ -74,6 +74,9 @@ static const menu_tr_t menu_tr_table[] = {
     { "Cap Learn",      "Cap Learn",       "容量学习" },
     { "Record SOH",      "Record SOH",       "记录SOH" },
     { "Reset Now",       "Reset Now",        "立即复位" },
+    /* ---- PowerBank 子页：SW6306（手动重新初始化） ---- */
+    { "SW6306",          "SW6306",           "SW6306" },
+    { "Init Now",        "Init Now",         "立即初始化" },
     { "Coming Soon",     "Coming Soon",      "敬请期待" },
     { "Pocket PowerBank","Pocket PowerBank", "口袋充电宝" },
     { "FW 1.0.0",        "FW 1.0.0",         "固件 1.0.0" },
@@ -235,7 +238,7 @@ menu_page_t menu_page_display, menu_page_time, menu_page_powerbank, menu_page_re
 menu_page_t menu_page_settings;
 menu_page_t menu_page_status;      /* ui_task 用 &menu_page_status 判断当前页 */
 menu_page_t menu_page_status_battery, menu_page_status_accel, menu_page_status_timer;
-menu_page_t menu_page_protocol, menu_page_powerlimit, menu_page_battery_set;
+menu_page_t menu_page_protocol, menu_page_powerlimit, menu_page_battery_set, menu_page_sw6306;
 menu_page_t menu_page_tools, menu_page_games, menu_page_about;
 
 /* ==================== 显示页（Display，三级，归拢显示相关项） ==================== */
@@ -437,12 +440,31 @@ static const menu_item_t menu_items_battery_set[] = {
 };
 MENU_PAGE_("Battery", menu_page_battery_set, menu_items_battery_set);
 
-/* ==================== 充电宝页（PowerBank，套娃三个子页） ==================== */
+/* ==================== PowerBank → SW6306 子页（手动重新初始化） ====================
+ * 背景：I²C 读失败自动置离线→自动重初始化这条路径已被
+ * SW6306_I2C_FAIL_MARK_OFFLINE（sw6306.h）临时屏蔽，避免布线干扰下被反复重初始化；
+ * 需要时在这里手动触发一次（ForceOff + Init 由 SW6306_task 下一轮完成）。
+ * 注意：MarkUninitialized() 只是清 initialized 标志；若要做完整复位并重新配置，
+ * 后续可在此页扩展（当前只按需求提供"重新初始化"）。 */
+static void sw6306_reinit_apply(menu_item_t *it)
+{
+    (void)it;
+    SW6306_MarkUninitialized();
+}
+
+static const menu_item_t menu_items_sw6306[] = {
+    MENU_ITEM_BACK_("Return"),
+    MENU_ITEM_ACTION_("Init Now", sw6306_reinit_apply),
+};
+MENU_PAGE_("SW6306", menu_page_sw6306, menu_items_sw6306);
+
+/* ==================== 充电宝页（PowerBank，套娃四个子页） ==================== */
 static const menu_item_t menu_items_powerbank[] = {
     MENU_ITEM_BACK_("Return"),
     MENU_ITEM_PAGE_("Protocol",   &menu_page_protocol),
     MENU_ITEM_PAGE_("PowerLimit", &menu_page_powerlimit),
     MENU_ITEM_PAGE_("Battery",    &menu_page_battery_set),
+    MENU_ITEM_PAGE_("SW6306",     &menu_page_sw6306),
 };
 MENU_PAGE_("PowerBank", menu_page_powerbank, menu_items_powerbank);
 

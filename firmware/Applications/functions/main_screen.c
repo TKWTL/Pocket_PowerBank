@@ -393,7 +393,9 @@ static void main_screen_destroy(void)
 void main_screen_run(app_action_t action)
 {
     static uint8_t s_wled_on = 0;       /* WLED 开关状态 */
-    static int8_t  s_wled_dir = 1;      /* 调光方向：+1 增亮 / -1 减亮；默认增，长按结束切换，始终存储 */
+    static int8_t  s_wled_dir = -1;     /* 调光方向：+1 增亮 / -1 减亮；默认减（变暗），长按结束切换，始终存储 */
+    static uint8_t s_dim_div = 0;       /* 调光分频：每 8 次长按重复调一级（UI 侧限速；
+                                         * 驱动侧另有 WLED_RAMP_TICKS 的 PWM 渐变时长，两者叠加） */
 
     switch (action) {
     case APP_ACTION_UP:      /* MENU 键：打开菜单（主界面销毁释放内存） */
@@ -401,7 +403,6 @@ void main_screen_run(app_action_t action)
         menu_open();
         break;
     case APP_ACTION_ENTER_DBL:   /* CONF 双击：开关 WLED */
-        USART_Printf("[UI] DBL wled_on=%u prot=%u\n", s_wled_on, WLED_IsProtectedOff());
         /* 状态同步：灯被保护强制关闭时 UI 开关状态归 0，保护解除后一次双击即可重新点亮 */
         if (WLED_IsProtectedOff()) {
             s_wled_on = 0;
@@ -410,18 +411,25 @@ void main_screen_run(app_action_t action)
             WLED_Off();
             s_wled_on = 0;
         } else {
-            WLED_On();   /* 开灯（恢复上次亮度，无则最大） */
+            WLED_On();   /* 开灯（恢复上次亮度，无则亮度中点） */
             s_wled_on = 1;
         }
         break;
-    case APP_ACTION_ENTER_HOLD:  /* CONF 长按：持续调光（步进 1/周期，方向 s_wled_dir） */
+    case APP_ACTION_ENTER_HOLD:  /* CONF 长按：持续调光（分频后步进 1，方向 s_wled_dir） */
         {
-            uint16_t lvl = WLED_GetBrightness();
-            int32_t nl = (int32_t)lvl + (int32_t)s_wled_dir * 1;
-            if (nl > WLED_BRIGHTNESS_MAX) nl = WLED_BRIGHTNESS_MAX;
-            if (nl < 0) nl = 0;
-            WLED_SetBrightness((uint16_t)nl);
-            s_wled_on = 1;   /* 调光即开灯 */
+            if (++s_dim_div >= 8) {
+                uint16_t lvl;
+                int32_t nl;
+                s_dim_div = 0;
+                lvl = WLED_GetBrightness();
+                nl = (int32_t)lvl + (int32_t)s_wled_dir * 1;
+                /* 钳位到 [WLED_BRIGHTNESS_MIN, WLED_BRIGHTNESS_MAX]：
+                 * 下端 PWM 16（4²）不灭灯，便于确认灯状态；上端不超最大亮度 */
+                if (nl > WLED_BRIGHTNESS_MAX) nl = WLED_BRIGHTNESS_MAX;
+                if (nl < WLED_BRIGHTNESS_MIN) nl = WLED_BRIGHTNESS_MIN;
+                WLED_SetBrightness((uint16_t)nl);
+                s_wled_on = 1;   /* 调光即开灯 */
+            }
         }
         break;
     case APP_ACTION_ENTER_HOLD_END:  /* CONF 长按结束：切换调光方向（下次长按反向） */

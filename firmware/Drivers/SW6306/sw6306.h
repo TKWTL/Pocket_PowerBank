@@ -16,6 +16,28 @@ extern C {
 //  - 已定义：协作式 API（返回类型为 char，并额外带 struct pt *pt 参数）。
 //#define SW6306_USE_PROTOTHREAD
 
+/* ===== 器件离线判定总开关（2026-09 临时屏蔽）=====
+ * 背景：I²C 读失败（含 BUSERR）会置 online/initialized=0，而 SW6306_task 看到
+ * initialized==0 就会 ForceOff+Init。当前 PCB 布线存在较强干扰，开灯时 I²C 错误
+ * 成片出现，导致 SW6306 被反复重初始化、WLED 亮度被一并打回默认。
+ * 置 1：彻底不因 I²C 失败把器件判离线（改为在 菜单→Settings→PowerBank→SW6306 里手动重初始化）。
+ * 置 0：恢复原行为（I²C 失败即置离线、自动重新初始化）。
+ * 注意：本开关只管"I²C 失败"这一条路径；芯片独立复位（配置读回失配）与 ADC 数据越界
+ * 仍会照常触发重初始化，因为那两种是真实故障。 */
+#ifndef SW6306_I2C_FAIL_MARK_OFFLINE
+#define SW6306_I2C_FAIL_MARK_OFFLINE    1           //1=屏蔽"I²C 失败→置离线"（当前 PCB 布线整改前的临时状态）；0=恢复自动重新初始化
+#endif
+
+/* I²C 读失败时的统一动作：置离线（下一轮自动重新初始化）。
+ * 用宏而不是在每处写 #if，避免条件写反导致开关失效。
+ * 注意：真正因 I²C 失败"离线"的语义是 initialized=0（online 字段本驱动未使用），
+ * 是否同时清 online 由各驱动自己的宏决定。 */
+#if SW6306_I2C_FAIL_MARK_OFFLINE
+#define SW6306_MARK_OFFLINE_ON_I2C_FAIL()   do {} while(0)
+#else
+#define SW6306_MARK_OFFLINE_ON_I2C_FAIL()   do { SW6306_Status.initialized = 0; } while(0)
+#endif
+
 /*包含自己的I2C驱动库*/
 #include "bsp_i2c.h"
         
@@ -29,9 +51,12 @@ extern C {
 #endif
 
 
-//设置SW6306功率路径上的感测电阻值 (单位:mOhm)
-#define SW_VBUS_RSHUNT                  5           //VBUS 电流路径上的感测电阻值
-#define SW_BATT_RSHUNT                  5           //电池电流路径上的感测电阻值
+/* 电池端感测电阻（单位:mΩ）
+ *  - SW_BATT_RSHUNT            ：实际硬件值（校准变量初值）
+ *  - SW6306_BATT_RSHUNT_NOMINAL：芯片内部标定基准（IBAT ADC 5mA/LSB 对应 5mΩ，勿改）
+ * 输出端（VBUS）因高压与协议限流的准确性固定用 5mΩ，不做校准。 */
+#define SW_BATT_RSHUNT                  3.0f          //电池电流路径上的感测电阻值（实际硬件）
+#define SW6306_BATT_RSHUNT_NOMINAL      5.0f          //芯片内部电池端标定基准（mΩ）
     
 /* 按实际 NTC 改这三个参数：
  *  - SW6306_NTC_R25_OHM    ：25°C 时阻值（常见 10k / 100k）
@@ -45,7 +70,7 @@ extern C {
 #define SW6306_NTC_T0_C                 25.0f
 #endif
 #ifndef SW6306_NTC_B
-#define SW6306_NTC_B                    3435
+#define SW6306_NTC_B                    3380
 #endif
 
 /* NTC 温度计算使能：1=启用（需 FPU/浮点 logf，SW6306_CalcNTCTemp_C/NTCTempLoad 会计算）。
@@ -56,7 +81,7 @@ extern C {
 
 //输入输出最大功率设定，最大100W
 #define SW6306_INPUT_POWER_MAX          30U         //输入/充电功率，单位1W
-#define SW6306_OUTPUT_POWER_MAX         45U         //输出/放电功率，单位1W
+#define SW6306_OUTPUT_POWER_MAX         55U         //输出/放电功率，单位1W
 
 //电池端输入输出最大电流设定，最大100W
 #define SW6306_BAT_DCHG_CURR_MAX        12000U      //设置放电电池端限流值（单位:mA，范围：100~12000）
@@ -1304,7 +1329,7 @@ SW6306_RET SW6306_ADCLoad(SW6306_NOARG);      //读取全部ADC数据并更新�
 uint16_t SW6306_ReadVBUS(void);                 //读取BUS电压
 uint16_t SW6306_ReadIBUS(void);                 //读取BUS电流
 uint16_t SW6306_ReadVBAT(void);                 //读取BAT电压
-uint16_t SW6306_ReadIBAT(void);                 //读取BAT电流
+uint16_t SW6306_ReadIBAT(void);                 //读取BAT电流（已按电池端感测电阻校准）
 int16_t SW6306_ReadTNTC(void);                  //读取NTC温度（结果为5的倍数，并不准确，不推荐使用）
 float SW6306_ReadTCHIP(void);                   //读取芯片温度
 float SW6306_ReadVNTC(void);                    //读取NTC电压
@@ -1313,6 +1338,10 @@ float SW6306_TNTC_Calc(void);                   //由 Rntc 用 Beta 公式算温
 float SW6306_CalcNTCTemp_C(void);               //计算 NTC 温度（°C，Beta 公式；独立 API，无 FPU 平台可裁剪）
 float SW6306_ReadNTCTemp(void);                 //读取句柄中的 NTC 温度（°C，Beta 公式计算）
 SW6306_RET SW6306_NTCTempLoad(SW6306_NOARG);    //计算并缓存 NTC 温度到句柄（须先 ADCLoad+StatusLoad）
+/* 电池端感测电阻校准（芯片按 SW6306_BATT_RSHUNT_NOMINAL 标定，实际硬件不同时用本 API 重新校准）：
+ * 影响 IBAT 读数/电池限流读数/库仑计能量读数（× NOMINAL/实际）与下次 Init 写入的电池限流值（× 实际/NOMINAL）。 */
+SW6306_RET SW6306_SetBattRShunt(SW6306_ARGS(float rshunt_mohm));  //设置实际电池端感测电阻（mΩ，拒绝≤0.1）
+float SW6306_GetBattRShunt(void);                                 //读取当前校准值（mΩ）
 //状态相关操作
 SW6306_RET SW6306_StatusLoad(SW6306_NOARG);   //将SW6306的各种状态读取到镜像寄存器(0x12,0x14,0x15,0x18,0x1A,0x2A,0x2B,0x2C)
 uint8_t SW6306_IsWLEDON(void);                  //SW6306 WLED是否打开

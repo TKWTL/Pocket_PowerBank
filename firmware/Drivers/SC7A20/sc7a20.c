@@ -152,16 +152,22 @@ SC7A20_RET SC7A20_ByteModify(SC7A20_ARGS(uint8_t reg, uint8_t mask, uint8_t data
 */
 SC7A20_RET SC7A20_AccelLoad(SC7A20_NOARG)
 {
+    uint8_t t[6];                    /* 读缓冲：失败时镜像保持上一次有效值（不写入半帧数据） */
     SC7A20_FUNC_BEGIN;
     SC7A20_MUTEX_TAKE;
     /* 一次连读 0x28~0x2D（X_L,X_H,Y_L,Y_H,Z_L,Z_H），小端序，2的补码。
      * 注意：起始地址必须置 MSB=1（SC7A20_STRG_OUT_AUTO=0xA8）才能触发
      *       芯片地址自动递增的连续读；若用 0x28（MSB=0），每字节都返回
      *       同一寄存器值 → 三轴数据被复制成相同值（实测坑，勿改回）。 */
-    SC7A20_SPAWN_ARGS(SC7A20_BytesRead, SC7A20_STRG_OUT_AUTO, SC7A20_Status.sendbuf, 6);
-    SC7A20_Status.x = (int16_t)(((uint16_t)SC7A20_Status.sendbuf[1] << 8) | SC7A20_Status.sendbuf[0]);
-    SC7A20_Status.y = (int16_t)(((uint16_t)SC7A20_Status.sendbuf[3] << 8) | SC7A20_Status.sendbuf[2]);
-    SC7A20_Status.z = (int16_t)(((uint16_t)SC7A20_Status.sendbuf[5] << 8) | SC7A20_Status.sendbuf[4]);
+    if(SC7A20_I2C_Receive(SC7A20_I2C_ADDR, SC7A20_STRG_OUT_AUTO, t, 6, (uint8_t*)&SC7A20_Status.flag) != I2C_OK)
+    {
+        SC7A20_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SC7A20_MUTEX_GIVE;
+        SC7A20_FUNC_END;
+    }
+    SC7A20_Status.x = (int16_t)(((uint16_t)t[1] << 8) | t[0]);
+    SC7A20_Status.y = (int16_t)(((uint16_t)t[3] << 8) | t[2]);
+    SC7A20_Status.z = (int16_t)(((uint16_t)t[5] << 8) | t[4]);
     SC7A20_MUTEX_GIVE;
     SC7A20_FUNC_END;
 }
@@ -205,10 +211,16 @@ float SC7A20_ReadZ_mg(void)//读取Z轴加速度（单位：mg）
 */
 SC7A20_RET SC7A20_TempLoad(SC7A20_NOARG)
 {
+    uint8_t t[2];                    /* 读缓冲：失败时不改动镜像 */
     SC7A20_FUNC_BEGIN;
     SC7A20_MUTEX_TAKE;
-    SC7A20_SPAWN_ARGS(SC7A20_BytesRead, SC7A20_STRG_OUT_TEMP_L, SC7A20_Status.sendbuf, 2);
-    SC7A20_Status.temp = (int16_t)(((uint16_t)SC7A20_Status.sendbuf[1] << 8) | SC7A20_Status.sendbuf[0]);
+    if(SC7A20_I2C_Receive(SC7A20_I2C_ADDR, SC7A20_STRG_OUT_TEMP_L, t, 2, (uint8_t*)&SC7A20_Status.flag) != I2C_OK)
+    {
+        SC7A20_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SC7A20_MUTEX_GIVE;
+        SC7A20_FUNC_END;
+    }
+    SC7A20_Status.temp = (int16_t)(((uint16_t)t[1] << 8) | t[0]);
     SC7A20_MUTEX_GIVE;
     SC7A20_FUNC_END;
 }
@@ -222,9 +234,16 @@ float SC7A20_ReadTemp(void)//读取温度（单位：°C）
 /******************************状态操作区**************************************/
 SC7A20_RET SC7A20_StatusLoad(SC7A20_NOARG)//读取状态寄存器镜像（0x27）
 {
+    uint8_t st = 0U;                 /* 读缓冲：失败时不改动镜像 */
     SC7A20_FUNC_BEGIN;
     SC7A20_MUTEX_TAKE;
-    SC7A20_SPAWN_ARGS(SC7A20_ByteRead, SC7A20_STRG_STATUS, &SC7A20_Status.status);
+    if(SC7A20_I2C_Receive(SC7A20_I2C_ADDR, SC7A20_STRG_STATUS, &st, 1, (uint8_t*)&SC7A20_Status.flag) != I2C_OK)
+    {
+        SC7A20_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SC7A20_MUTEX_GIVE;
+        SC7A20_FUNC_END;
+    }
+    SC7A20_Status.status = st;
     SC7A20_MUTEX_GIVE;
     SC7A20_FUNC_END;
 }

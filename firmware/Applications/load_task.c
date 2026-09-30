@@ -41,8 +41,9 @@ static void data_refresh_all(void)
 }
 
 /* ==================== WLED 守护 + 电量统计（假 A1 插入） ====================
- * 守护：过温（NTC 60°C / 芯片 100°C）、零电量时由 WLED_Update 强制关灯
- *       （保持目标亮度，解除后允许手动再开）。
+ * 守护：正常工况下由 WLED_Tick（10ms）按 NTC 温度限档先压低功率；
+ *       WLED_Update（500ms）是兜底——过温（NTC 60°C / 芯片 100°C）、零电量时
+ *       锁存强制关灯（需降温/恢复后手动再开）。
  * 电量统计：WLED 开启且无任何真实口打开时，假插入 A1 口启动 SW6306 DCDC，
  *       使 WLED 耗电经 SW6306 库仑计计入电量（否则 WLED 电流不计入，虚增 SOC）。
  * 让位/补位：真实口（C1）插入或充电时拔出假 A1（让位）；拔出后补插。
@@ -61,9 +62,6 @@ static void wled_soc_manage(void)
     uint8_t a1_fake  = SW6306_IsPortA1ON();                        /* 假 A1（插入事件启动的 DCDC 通路） */
     uint8_t real_any = SW6306_IsPortC1ON();                        /* 真实口（A1 为假插入口，不计入） */
     uint8_t charging = SW6306_IsCharging();
-
-    /* 诊断：确认本函数执行 + 各条件值（WLED=1 且其余为 0 时应触发 A1 插入） */
-    USART_Printf("[SOC] wled=%u a1=%u real=%u chg=%u\n", wled_on, a1_fake, real_any, charging);
 
     /* WLED 开启期间阻止系统休眠（灯亮需持续供电，避免深睡掉电） */
     pm_api_set_sleep_block(PM_BLOCK_WLED, wled_on);
@@ -86,7 +84,6 @@ static void wled_soc_manage(void)
     /* 补位：WLED 开、无真实口、未充电 → 插入假 A1 启动 DCDC 计入电量 */
     if (wled_on && !a1_fake && !real_any && !charging) {
         SW6306_PortA1Insert();
-        USART_Printf("[SOC] A1 insert\n");
     }
 }
 
@@ -95,6 +92,8 @@ void load_task(void *pvParameters)
 {
     (void)pvParameters;
     uint32_t period_cnt = 0;
+
+    WLED_Init();   /* 初始化 WLED 亮度状态（恢复上次调光档位，不点灯） */
 
     for (;;) {
         /* 睡眠门控：睡眠准备/深睡期间不发起总线读写（已发起的由 powerdown 等待完成） */
@@ -130,7 +129,8 @@ void load_task(void *pvParameters)
             wled_soc_manage();   /* 500ms：管理假 C2 口（插入/让位/补位） */
             WLED_Update();       /* 500ms：WLED 保护（仅开启时判断，过温/零电量强制关灯） */
         }
-        /* 每 10ms：仅轮询计时（WLED 保护已移至 500ms 周期，灯关时不判断） */
+        /* 每 10ms：WLED 亮度渐变（相位逼近目标档位；灯关时立即返回）+ 轮询计时 */
+        WLED_Tick();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

@@ -9,6 +9,23 @@ static struct SW6306_StatusTypedef SW6306_Status;//SW6306状态全局变量
 
 static uint8_t s_pomax_target = SW6306_OUTPUT_POWER_MAX;   // 运行时最大输出功率目标（W），Init 写入、可由 SetMaxOutputPower 修改
 
+/* 电池端感测电阻校准值（mΩ）：初值 = SW_BATT_RSHUNT（实际硬件值），可由 SW6306_SetBattRShunt 重新校准。
+ * 芯片按 SW6306_BATT_RSHUNT_NOMINAL(5mΩ) 标定，实际电阻不同时按比例换算：
+ *  - 电流/能量读数 × (NOMINAL / s_batt_rshunt)
+ *  - 电池限流设置值 × (s_batt_rshunt / NOMINAL)
+ * 输出端（VBUS）固定 5mΩ，不参与校准。 */
+static float s_batt_rshunt = SW_BATT_RSHUNT;
+
+/* 读数换算系数（电流/能量：放大）与限流设置系数（写入值：缩小） */
+static float sw6306_batt_scale_read(void)
+{
+    return (s_batt_rshunt > 0.1f) ? (SW6306_BATT_RSHUNT_NOMINAL / s_batt_rshunt) : 1.0f;
+}
+static float sw6306_batt_scale_set(void)
+{
+    return (s_batt_rshunt > 0.1f) ? (s_batt_rshunt / SW6306_BATT_RSHUNT_NOMINAL) : 1.0f;
+}
+
 
 /*******************************基本操作区*************************************/
 SW6306_RET SW6306_ByteWrite(SW6306_ARGS(uint16_t reg, uint8_t data))
@@ -71,33 +88,56 @@ SW6306_RET SW6306_ByteModify(SW6306_ARGS(uint16_t reg, uint8_t mask, uint8_t dat
     SW6306_FUNC_END;
 }
 
-SW6306_RET SW6306_ADCRead(SW6306_ARGS(uint8_t ch, uint16_t *pData))
-{
-    SW6306_FUNC_BEGIN;
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_ADC_SET, ch);
-    SW6306_EXEC(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_ADCL, (uint8_t*)pData, 2, (uint8_t*)&SW6306_Status.flag));
-    SW6306_UNTIL(SW6306_Status.flag);
-    SW6306_FUNC_END;
-}
-
 /******************************状态读取区**************************************/
+
+/* 单个 ADC 通道：通道号 + 输出（原始码有效标志 + 12 位原始码）。
+ * 读失败时 ok=0：调用方跳过该通道，镜像保持上一次有效值——
+ * 既不写入栈垃圾、也不写 0（写 0 会被下面的边界检查判为越界而触发重初始化）。 */
+typedef struct {
+    uint8_t  ok;
+    uint16_t raw;
+} sw6306_adc_slot_t;
+
+static void sw6306_adc_read_raw(uint8_t ch, sw6306_adc_slot_t *slot)
+{
+    uint16_t raw = 0U;
+    SW6306_ByteWrite(SW6306_CTRG_ADC_SET, ch);
+    if(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_ADCL, (uint8_t*)&raw, 2, (uint8_t*)&SW6306_Status.flag) != I2C_OK)
+    {
+        slot->ok = 0U;               /* 本通道读失败（I2C 层已整笔重试过） */
+        return;
+    }
+    slot->raw = raw & 0x0FFF;        /* 12 位有效（0x31 低 8 位 + 0x32 低 4 位），高 4 位为保留位 */
+    slot->ok  = 1U;
+}
 
 SW6306_RET SW6306_ADCLoad(SW6306_NOARG)
 {
+    /* 原始码与工程量分开：先读齐 12 位原始码，再统一换算写入镜像（换算集中在 LOAD 阶段）。
+     * 失败的通道跳过更新，保证镜像不会出现"半新半旧"或被重复换算的值。 */
+    sw6306_adc_slot_t adc[7];
+    uint8_t i;
+    static const uint8_t ch_tab[7] = {
+        SW6306_ADC_SET_VBUS, SW6306_ADC_SET_IBUS, SW6306_ADC_SET_VBAT, SW6306_ADC_SET_IBAT,
+        SW6306_ADC_SET_TNTC, SW6306_ADC_SET_TCHIP, SW6306_ADC_SET_VNTC
+    };
     SW6306_FUNC_BEGIN;
     SW6306_MUTEX_TAKE;
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_ADC_SET);
-    SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_VBUS, &SW6306_Status.vbus);
-    SW6306_Status.vbus = SW6306_Status.vbus<< 3;                     //转换BUS电压
-    SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_IBUS, &SW6306_Status.ibus);
-    SW6306_Status.ibus = SW6306_Status.ibus<< 2;                     //转换BUS电流
-    SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_VBAT, &SW6306_Status.vbat);
-    SW6306_Status.vbat = SW6306_Status.vbat* 7;                      //转换BAT电压
-    SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_IBAT, &SW6306_Status.ibat);
-    SW6306_Status.ibat = SW6306_Status.ibat* 5;                      //转换BAT电流
-    SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_TNTC, &SW6306_Status.tntc);
-    SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_TCHIP, &SW6306_Status.tchip);
-    SW6306_SPAWN_ARGS(SW6306_ADCRead, SW6306_ADC_SET_VNTC, &SW6306_Status.vntc);
+    for(i = 0U; i < 7U; i++)
+    {
+        sw6306_adc_read_raw(ch_tab[i], &adc[i]);
+    }
+
+    /* 原始码 → 工程量（8mV / 4mA / 7mV / 5mA 每 LSB；电池端感测电阻校准在 ReadIBAT 里做） */
+    if(adc[0].ok) SW6306_Status.vbus  = (uint16_t)(adc[0].raw << 3);//转换BUS电压
+    if(adc[1].ok) SW6306_Status.ibus  = (uint16_t)(adc[1].raw << 2);//转换BUS电流
+    if(adc[2].ok) SW6306_Status.vbat  = (uint16_t)(adc[2].raw *  7);//转换BAT电压
+    if(adc[3].ok) SW6306_Status.ibat  = (uint16_t)(adc[3].raw *  5);//转换BAT电流
+    if(adc[4].ok) SW6306_Status.tntc  = adc[4].raw;
+    if(adc[5].ok) SW6306_Status.tchip = adc[5].raw;
+    if(adc[6].ok) SW6306_Status.vntc  = adc[6].raw;
+
     /* tntc 边界 5~24 = NTC -55~40°C：上限太低，快充/快放时电池正常发热超 40°C 会误判
      * 数据不合规 → initialized=0 → ForceOff+Init → 放电掉功率（2026-08-17/18 两次实测确认）。
      * 放宽为 5~50 = -55~170°C，仅拦截真正无效的通信数据。 */
@@ -118,9 +158,28 @@ uint16_t SW6306_ReadVBAT(void)//读取BAT电压
 {
     return SW6306_Status.vbat;
 }
-uint16_t SW6306_ReadIBAT(void)//读取BAT电流
+uint16_t SW6306_ReadIBAT(void)//读取BAT电流（已按电池端感测电阻校准）
 {
-    return SW6306_Status.ibat;
+    return (uint16_t)((float)SW6306_Status.ibat * sw6306_batt_scale_read());
+}
+
+/* 设置电池端感测电阻（mΩ）：硬件改动后重新校准。
+ * 拒绝 ≤0.1 的非法值（避免除零/异常缩放）。
+ * 注意：本函数仅改校准值；要让芯片内电池限流寄存器按新值重写，
+ * 需触发一次重新初始化（如调 SW6306_MarkUninitialized()）。 */
+SW6306_RET SW6306_SetBattRShunt(SW6306_ARGS(float rshunt_mohm))
+{
+    SW6306_FUNC_BEGIN;
+    if(rshunt_mohm > 0.1f)
+    {
+        s_batt_rshunt = rshunt_mohm;
+    }
+    SW6306_FUNC_END;
+}
+
+float SW6306_GetBattRShunt(void)//读取当前电池端感测电阻校准值（mΩ）
+{
+    return s_batt_rshunt;
 }
 int16_t SW6306_ReadTNTC(void)//读取并转换NTC温度
 {
@@ -192,14 +251,25 @@ float SW6306_ReadNTCTemp(void)//读取句柄中的 NTC 温度（°C，Beta 公�
 
 SW6306_RET SW6306_PortStatusLoad(SW6306_NOARG)//更新端口状态镜像寄存器(0x13,0x18,0x19,0x1C,0x1D)
 {
+    uint8_t t[5];                    /* 读缓冲：失败时镜像保持上一次有效值 */
     SW6306_FUNC_BEGIN;
     SW6306_MUTEX_TAKE;
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_NOLOAD);//切换低地址
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_NOLOAD, &SW6306_Status.noload);//0x13
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_SYS_STAT, &SW6306_Status.sys_stat);//0x18
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_TYPEC, &SW6306_Status.typec_stat);//0x19
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_TYPEA_QCIN, &SW6306_Status.typea_qcin);//0x1C
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_PORT_STA, &SW6306_Status.port_stat);//0x1D
+    if(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_NOLOAD, &t[0], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_SYS_STAT, &t[1], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_TYPEC, &t[2], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_TYPEA_QCIN, &t[3], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_PORT_STA, &t[4], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK)
+    {
+        SW6306_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败（已整笔重试过）：当前由开关临时屏蔽 */
+        SW6306_MUTEX_GIVE;
+        SW6306_FUNC_END;
+    }
+    SW6306_Status.noload     = t[0];//0x13
+    SW6306_Status.sys_stat   = t[1];//0x18
+    SW6306_Status.typec_stat = t[2];//0x19
+    SW6306_Status.typea_qcin = t[3];//0x1C
+    SW6306_Status.port_stat  = t[4];//0x1D
     SW6306_MUTEX_GIVE;
     SW6306_FUNC_END;
 }
@@ -242,9 +312,9 @@ uint16_t SW6306_ReadIPortLimit(void)//读取充电时端口限流实时值（单
 {
     return SW6306_Status.ibuslim_chg* 50+ 200;
 }
-uint16_t SW6306_ReadIBattLimit(void)//读取充电时电池限流实时值（单位：mA）
+uint16_t SW6306_ReadIBattLimit(void)//读取充电时电池限流实时值（单位：mA，已按感测电阻校准）
 {
-    return SW6306_Status.ibatlim_chg* 100+ 100;
+    return (uint16_t)((float)(SW6306_Status.ibatlim_chg * 100 + 100) * sw6306_batt_scale_read());
 }
 uint8_t SW6306_ReadMaxOutputPower(void)//读取最大输出功率（单位：W）
 {
@@ -315,14 +385,28 @@ const char *SW6306_ReadProtocol(void)//当前协议读取（返回字符串地�
 
 SW6306_RET SW6306_StatusLoad(SW6306_NOARG)//将SW6306的各种状态读取到镜像寄存器(0x12,0x14,0x15,0x18,0x1A,0x2A,0x2B,0x2C)
 {
+    uint8_t t[8];                    /* 读缓冲：失败时镜像保持上一次有效值 */
     SW6306_FUNC_BEGIN;
     SW6306_MUTEX_TAKE;
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_MODE);//切换低地址
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_MODE, &SW6306_Status.mode);//0x12
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_DISPLAY, &SW6306_Status.display);//0x14
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT0, &SW6306_Status.fault0);//0x15
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_SYS_STAT, &SW6306_Status.sys_stat);//0x18
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_NTC_CURR, &SW6306_Status.intc);//0x1A
+    if(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_MODE, &t[0], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_DISPLAY, &t[1], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_FAULT0, &t[2], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_SYS_STAT, &t[3], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_NTC_CURR, &t[4], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_FAULT1, &t[5], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_FAULT2, &t[6], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_FAULT3, &t[7], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK)
+    {
+        SW6306_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败（已整笔重试过）：当前由开关临时屏蔽 */
+        SW6306_MUTEX_GIVE;
+        SW6306_FUNC_END;
+    }
+    SW6306_Status.mode      = t[0];//0x12
+    SW6306_Status.display   = t[1];//0x14
+    SW6306_Status.fault0    = t[2];//0x15
+    SW6306_Status.sys_stat  = t[3];//0x18
+    SW6306_Status.intc      = t[4];//0x1A
     switch(SW6306_Status.intc & SW6306_NTC_CURR_MSK)
     {
         default:
@@ -337,9 +421,9 @@ SW6306_RET SW6306_StatusLoad(SW6306_NOARG)//将SW6306的各种状态读取到镜
             SW6306_Status.intc = 80;
             break;
     }
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT1, &SW6306_Status.fault1);//0x2A
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT2, &SW6306_Status.fault2);//0x2B
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT3, &SW6306_Status.fault3);//0x2C
+    SW6306_Status.fault1 = t[5];//0x2A
+    SW6306_Status.fault2 = t[6];//0x2B
+    SW6306_Status.fault3 = t[7];//0x2C
     SW6306_MUTEX_GIVE;
     SW6306_FUNC_END;
 }
@@ -436,28 +520,29 @@ SW6306_RET SW6306_ClearEvents(SW6306_ARGS(uint8_t events))//写1清除REG0x15已
 
 SW6306_RET SW6306_CapacityLoad(SW6306_NOARG)//更新容量与库仑计镜像寄存器(0x86~0x8A,0x99,0xA2)
 {
+    uint8_t t[7];                    /* 读缓冲：失败时镜像保持上一次有效值 */
     SW6306_FUNC_BEGIN;
     SW6306_MUTEX_TAKE;
 
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_BATLVL_DISPLAY);//切换低地址
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_BATLVL_DISPLAY, &SW6306_Status.capacity);//0x99
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_LEARN, &SW6306_Status.learn_stat);//0xA2
-
-    /* 0x86~0x87：最大容量（12 位：0x86 为低 8 位，0x87 低 4 位为高 4 位；0x87 高 4 位保留）。
-     * 不能连续读 2 字节进小端 uint16（会把 0x87 完整 8 位当高位），必须单独组合。 */
+    /* 0x99 显示电量、0xA2 学习状态、0x86/0x87 最大容量（分开读，见下）、0x88~0x8A 当前容量（3B） */
+    if(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_BATLVL_DISPLAY, &t[0], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_LEARN, &t[1], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       /* 0x86~0x87：最大容量（12 位：0x86 为低 8 位，0x87 低 4 位为高 4 位；0x87 高 4 位保留）。
+        * 不能连续读 2 字节进小端 uint16（会把 0x87 完整 8 位当高位），必须单独组合。 */
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_GAUGE_MCAPL, &t[2], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_GAUGE_MCAPH, &t[3], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
+       /* 0x88~0x8A：当前容量（3B） */
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_CURR_CAPL, &t[4], 3, (uint8_t*)&SW6306_Status.flag) != I2C_OK)
     {
-        uint8_t mcapl, mcapm;
-        SW6306_EXEC(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_GAUGE_MCAPL, &mcapl, 1, (uint8_t*)&SW6306_Status.flag));
-        SW6306_UNTIL(SW6306_Status.flag);
-        SW6306_EXEC(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_GAUGE_MCAPH, &mcapm, 1, (uint8_t*)&SW6306_Status.flag));
-        SW6306_UNTIL(SW6306_Status.flag);
-        SW6306_Status.maxcap = (uint16_t)(((uint16_t)(mcapm & 0x0F) << 8) | mcapl);
+        SW6306_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败（已整笔重试过）：当前由开关临时屏蔽 */
+        SW6306_MUTEX_GIVE;
+        SW6306_FUNC_END;
     }
-
-    /* 0x88~0x8A：当前容量（3B） */
-    SW6306_Status.presentcap = 0;
-    SW6306_EXEC(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_CURR_CAPL, (uint8_t*)&SW6306_Status.presentcap, 3, (uint8_t*)&SW6306_Status.flag));
-    SW6306_UNTIL(SW6306_Status.flag);
+    SW6306_Status.capacity   = t[0];//0x99
+    SW6306_Status.learn_stat = t[1];//0xA2
+    SW6306_Status.maxcap     = (uint16_t)(((uint16_t)(t[3] & 0x0F) << 8) | t[2]);
+    SW6306_Status.presentcap = (uint32_t)t[4] | ((uint32_t)t[5] << 8) | ((uint32_t)t[6] << 16);
 
     SW6306_MUTEX_GIVE;
     SW6306_FUNC_END;
@@ -472,13 +557,13 @@ uint8_t SW6306_ReadCapacity(void)//读取SW6306显示电量
  *  - 当前能量 = presentcap × 0.07964 mWh（24bit 细分辨率）
  *  - 326.2236 / 0.07964 ≈ 4096，两者仅分辨率不同。
  * 例：2S1P 30Q 充满后 maxcap=65 → 65×326.22 ≈ 21203 mWh ≈ 21.2 Wh（≈7.2V×3.0Ah）。 */
-float SW6306_ReadMaxEnergy_mWh(void)//读取库仑计最大能量（单位：mWh）
+float SW6306_ReadMaxEnergy_mWh(void)//读取库仑计最大能量（单位：mWh，已按感测电阻校准）
 {
-    return SW6306_Status.maxcap * 326.2236f;
+    return SW6306_Status.maxcap * 326.2236f * sw6306_batt_scale_read();
 }
-float SW6306_ReadRemainEnergy_mWh(void)//读取库仑计当前（剩余）能量（单位：mWh）
+float SW6306_ReadRemainEnergy_mWh(void)//读取库仑计当前（剩余）能量（单位：mWh，已按感测电阻校准）
 {
-    return SW6306_Status.presentcap * 0.07964f;
+    return SW6306_Status.presentcap * 0.07964f * sw6306_batt_scale_read();
 }
 sw6306_learn_state_t SW6306_ReadLearnState(void)//读取容量学习状态（0xA2 镜像，3 态 + Unknown）
 {
@@ -1032,12 +1117,12 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_IOCTL, SW6306_IRQ1);
     //强制控制输入输出功率和电池电流
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_FORCECTL, SW6306_FORCECTL_POUT|SW6306_FORCECTL_PIN|SW6306_FORCECTL_IBAT);
-    //设置放电电池端限流值
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_DCHG_IBAT, (SW6306_BAT_DCHG_CURR_MAX/100)&0xFFU);
+    //设置放电电池端限流值（按实际感测电阻缩放写入值）
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_DCHG_IBAT, (uint8_t)((float)SW6306_BAT_DCHG_CURR_MAX * sw6306_batt_scale_set() / 100.0f + 0.5f));
     //输入功率设置
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PISET, SW6306_INPUT_POWER_MAX);
-    //设置充电电池端限流值
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_CHG_IBAT, (SW6306_BAT_CHG_CURR_MAX/100)&0xFFU);
+    //设置充电电池端限流值（按实际感测电阻缩放写入值）
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_CHG_IBAT, (uint8_t)((float)SW6306_BAT_CHG_CURR_MAX * sw6306_batt_scale_set() / 100.0f + 0.5f));
     //输出功率设置（写入运行时目标，默认 SW6306_OUTPUT_POWER_MAX）
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_POSET, s_pomax_target);
     //输出功率设置

@@ -70,6 +70,10 @@ static uint16_t s_pwm_tick  = 0;   /* 本段已走过的 tick 数（0..WLED_RAMP
 
 static void wled_protect_off(void);          /* 前向声明（wled_update_output 里调用） */
 
+/* 供电通路闸门：1=允许输出（默认）。load_task 在假插入 A1 前后用它强制排序——
+ * 关闸时只冻结 PWM 渐变，不清任何状态，因此重新开闸后会从当前值继续，不会跳变。 */
+static uint8_t  s_path_ok  = 1;
+
 /* 亮度档位(0~25) → PWM(0~1023)：PWM = level²（人眼感知线性化，见 wled.h）。
  * level=0 → 关；25²=625（约占满量程 61%）。 */
 static uint16_t wled_level_to_pwm(uint16_t level)
@@ -107,6 +111,7 @@ void WLED_Init(void)
     s_pwm_from  = 0;
     s_pwm_to    = 0;
     s_pwm_tick  = WLED_RAMP_TICKS;
+    s_path_ok   = 1;
     /* TMR1_CH2 引脚与 PWM 已由 wk_tmr1_init() 配置，此处不驱动灯（保持关闭） */
 }
 
@@ -141,31 +146,29 @@ static uint8_t wled_temp_limit(void)
     return s_limit_table[idx];
 }
 
-/* 60°C 及以上【直接关闭】（不是降档）——瞬时判断，与查表无关：
- *  - 关闭阈值：NTC ≥ WLED_NTC_OFF_C(60°C)（用户明确要求）或芯片结温 ≥ WLED_CHIP_OFF_C；
- *  - 锁存与回升：关闭后进入 s_cut 锁存，须 NTC ≤ WLED_NTC_RECOVER_C(45°C) 且芯片温度
- *    回落后才解除，避免"关→立刻重开→又超温"的死循环；解除后灯仍是关的，等手动开。 */
+/* NTC ≥ 60°C【直接关闭】（不是降档）——瞬时判断，与查表无关：
+ * 只认 NTC：NTC 贴在散热铝壳上，代表 LED 实际热状态，60°C 关闭已经取代原先
+ * 按芯片结温的 90/100°C 保护（那两个宏已删除），不再单独判芯片温度。
+ * 锁存与回升：关闭后进入 s_cut 锁存，须 NTC ≤ WLED_NTC_RECOVER_C(45°C) 才解除，
+ * 避免"关→立刻重开→又超温"的死循环；解除后灯仍是关的，等手动开。 */
 static uint8_t wled_cutoff_now(void)
 {
     int16_t tntc;
-    float   tchip;
-    uint8_t valid = wled_temp_valid();
 
-    /* 镜像未就绪（上电初期 NTC/芯片温度都读 0）：不判过温，避免开机误关灯 */
-    if(valid == 0) return 0;
+    /* 镜像未就绪（上电初期 TNTC 读 0）：不判过温，避免开机误关灯 */
+    if(wled_temp_valid() == 0) return 0;
 
-    tntc  = SW6306_ReadTNTC();
-    tchip = SW6306_ReadTCHIP();
+    tntc = SW6306_ReadTNTC();
 
     /* 阈值与表尾解耦：直接比温度，不依赖 s_limit_table 的最后一格 */
-    if(tntc >= WLED_NTC_OFF_C || tchip >= WLED_CHIP_OFF_C)
+    if(tntc >= WLED_NTC_OFF_C)
     {
         s_cut = 1;
         return 1;
     }
     if(s_cut)
     {
-        if(tntc <= WLED_NTC_RECOVER_C && tchip <= WLED_CHIP_RECOVER_C)
+        if(tntc <= WLED_NTC_RECOVER_C)
         {
             s_cut = 0;          /* 已冷却，解除过温锁存（灯仍保持关闭，等手动开） */
         }
@@ -337,7 +340,26 @@ void WLED_Tick(void)
         s_pwm_to   = target;
         s_pwm_tick = 0U;
     }
+
+    /* 供电通路未就绪（load_task 正在插/拔假 A1）→ 冻结渐变；就绪后从当前值继续。
+     * 关灯（目标 0）不受闸门限制：断电要立刻生效。 */
+    if(s_path_ok == 0U && target != 0U)
+    {
+        return;
+    }
     wled_pwm_ramp();
+}
+
+/* 供电通路闸门（load_task 假插入 A1 前后调用，用于强制"先开 A1 再出 PWM"、
+ * "先停 PWM 再拔 A1"的时序）。只冻结渐变，不改档位/保护状态。 */
+void WLED_SetPowerPath(uint8_t ready)
+{
+    s_path_ok = (ready != 0U) ? 1U : 0U;
+}
+
+uint16_t WLED_GetPwm(void)//读取当前实际 PWM（供电通路排序用：0 表示灯已完全熄灭）
+{
+    return s_pwm;
 }
 
 void WLED_On(void)

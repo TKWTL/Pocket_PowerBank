@@ -16,9 +16,11 @@
 #include "stdint.h"
 
 /******************************用户设置区开始**********************************/
-/* WLED 保护阈值：仅过温（NTC/芯片温度）+ 零电量（SW6306 显示 0%）。
+/* WLED 保护阈值：仅过温（NTC）+ 零电量（SW6306 显示 0%）。
  * 电压判断（battery low）已删除：WLED 开启瞬间大电流把 VBAT 瞬时拉低，
  * 会误触发低压关灯（实测 VBAT 6979mV 时保护读到 3892mV）。
+ * 芯片结温保护（原 90/100°C）也已删除：NTC 贴在散热铝壳上、代表 LED 实际热状态，
+ * 60°C 关闭已经取代它，不再单独判芯片温度。
  * 注：NTC 侧 60°C 是【直接关闭 WLED】（不是降档），由 wled.c 的 wled_cutoff_now()
  *     直接与本宏比较完成（与限档表无关，表只负责降档）；改本宏需同步改限档表尾部。 */
 #ifndef WLED_NTC_OFF_C
@@ -26,12 +28,6 @@
 #endif
 #ifndef WLED_NTC_RECOVER_C
 #define WLED_NTC_RECOVER_C              45          //关闭后降至此温度才允许双击重开（迟滞防振荡）
-#endif
-#ifndef WLED_CHIP_OFF_C
-#define WLED_CHIP_OFF_C                 100.0f      //WLED 芯片过温关闭阈值（°C）
-#endif
-#ifndef WLED_CHIP_RECOVER_C
-#define WLED_CHIP_RECOVER_C             90.0f       //WLED 芯片过温恢复阈值（°C）
 #endif
 #ifndef WLED_BRIGHTNESS_MIN
 #define WLED_BRIGHTNESS_MIN             4           //调光亮度值下限（4²=16 → PWM 最小 16；调光不灭灯）
@@ -100,6 +96,8 @@ void WLED_On(void);                            /* 开灯（恢复到上次档位
 void WLED_Off(void);                           /* 关灯（保留档位记忆，下次开灯回到该档位） */
 uint16_t WLED_GetBrightness(void);             /* 读取用户设定档位（温度限档前的目标值，UI 调光用） */
 uint16_t WLED_GetOutputLevel(void);            /* 读取实际输出档位（已含温度限档；0=未输出） */
+uint16_t WLED_GetPwm(void);                    /* 读取当前实际 PWM（0=灯已完全熄灭） */
+void WLED_SetPowerPath(uint8_t ready);         /* 供电通路闸门：0=冻结 PWM 渐变（load_task 插/拔假 A1 时用），1=放行 */
 uint8_t WLED_IsProtectedOff(void);             /* 灯是否被保护强制关闭（供 UI 同步开关状态） */
 void WLED_Update(void);                        /* 500ms 兜底保护：过温/零电量锁存关灯；解除后不自动恢复（手动开） */
 uint8_t WLED_IsZeroCapacity(void);             /* 零电量（SW6306 显示电量 0%）守护判断 */

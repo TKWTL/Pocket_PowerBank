@@ -46,10 +46,17 @@ static void data_refresh_all(void)
  *       锁存强制关灯（需降温/恢复后手动再开）。
  * 电量统计：WLED 开启且无任何真实口打开时，假插入 A1 口启动 SW6306 DCDC，
  *       使 WLED 耗电经 SW6306 库仑计计入电量（否则 WLED 电流不计入，虚增 SOC）。
+ * 时序（必须严格）：开灯时【先插 A1、再放行 PWM 渐变】；关灯时【先停 PWM、再拔 A1】。
+ *       否则灯先亮而库仑计尚未通路（这段电流漏计），或灯未灭就断电（灯闪一下）。
+ *       本函数只有 500ms 节拍，所以两个"顺序点"都用 WLED_SetPowerPath() 的闸门做互锁，
+ *       而不是靠在本函数里调顺序——调用顺序其实已经是对的（先插后补位/先让位后拔）。
  * 让位/补位：真实口（C1）插入或充电时拔出假 A1（让位）；拔出后补插。
  * 休眠：WLED 开启期间阻止系统休眠（PM_BLOCK_WLED）。 */
 #define WLED_SOC_IBUS_NOLOAD   50   /* 假 A1 口空载判定电流（mA） */
 #define WLED_SOC_DEATTACH_CNT  2    /* 假 A1 让位延迟（2×500ms=1s，wled_soc_manage 每 500ms 调用一次） */
+#define WLED_TICK_MS           10   /* WLED 渐变节拍（与 load_task 的 vTaskDelay 一致） */
+#define WLED_SOC_RAMP_MS       200  /* 等 PWM 渐变走完的余量：渐变 160ms + 裕量 */
+#define WLED_SOC_RAMP_TICKS    ((WLED_SOC_RAMP_MS) / (WLED_TICK_MS))
 
 /* 500ms 周期调用：管理假 A1 口的插入/让位/补位（I2C 操作，SW6306 互斥保护）。
  * 用 A1 口而非 C2：C 口端口事件仅在 source 状态生效（sw6306.h:456），
@@ -58,10 +65,13 @@ static void data_refresh_all(void)
 static void wled_soc_manage(void)
 {
     static uint16_t deattach_delay;
+    static uint8_t  pwm_was_on;
+    static uint8_t  post_off_cnt;
     uint8_t wled_on  = (WLED_GetBrightness() != 0);
     uint8_t a1_fake  = SW6306_IsPortA1ON();                        /* 假 A1（插入事件启动的 DCDC 通路） */
     uint8_t real_any = SW6306_IsPortC1ON();                        /* 真实口（A1 为假插入口，不计入） */
     uint8_t charging = SW6306_IsCharging();
+    uint8_t keep_a1  = 0;                                          /* 1=本周期必须保留 A1（灯准备亮/正在亮/正在灭） */
 
     /* WLED 开启期间阻止系统休眠（灯亮需持续供电，避免深睡掉电） */
     pm_api_set_sleep_block(PM_BLOCK_WLED, wled_on);
@@ -69,8 +79,45 @@ static void wled_soc_manage(void)
         pm_api_refresh_idle();
     }
 
+    /* ---- 开灯侧：A1 未就绪前冻结 PWM 渐变（先插 A1，再让灯亮） ---- */
+    if (wled_on && !a1_fake) {
+        WLED_SetPowerPath(0);      /* 关闸：WLED 目标已非 0，但 PWM 停在当前值 */
+        if (!real_any && !charging) {
+            SW6306_PortA1Insert();  /* 先插 A1（启动 DCDC）→ 库仑计通路就绪 */
+            a1_fake = 1;           /* 本周期内视为已就绪 */
+        }
+        keep_a1 = 1;               /* A1 尚未插上（真实口占用/充电中）时不要被让位逻辑拔掉 */
+    }
+    if (a1_fake && wled_on) {
+        /* A1 已在位：等灯真正亮起（PWM>0）并留够渐变时间，再放行 */
+        if (WLED_GetPwm() != 0) {
+            pwm_was_on = 1;
+        }
+        WLED_SetPowerPath(1);
+    }
+
+    /* ---- 关灯侧：先让 PWM 归 0（灯完全灭），再拔 A1 ---- */
+    if (!wled_on) {
+        WLED_SetPowerPath(1);      /* 闸门不拦关灯，但显式放行以免影响下次点亮 */
+        if (pwm_was_on && WLED_GetPwm() != 0) {
+            keep_a1 = 1;                            /* 渐变尚未走完，别拔 A1 */
+            if (post_off_cnt < WLED_SOC_RAMP_TICKS) post_off_cnt++;
+        } else if (pwm_was_on) {
+            keep_a1 = 1;                            /* PWM 已归 0，再留 2 个 500ms 让电流彻底落下去 */
+            if (post_off_cnt < WLED_SOC_RAMP_TICKS) {
+                post_off_cnt++;
+            } else {
+                pwm_was_on   = 0;
+                post_off_cnt = 0;
+                /* 此刻才允许拔 A1（下面让位逻辑里执行） */
+            }
+        }
+    } else {
+        post_off_cnt = 0;
+    }
+
     /* 让位：真实口（C1）打开 / 充电中 / WLED 关闭且假 A1 空载 → 拔出假 A1 */
-    if (a1_fake && (real_any || charging ||
+    if (a1_fake && !keep_a1 && (real_any || charging ||
                     (!wled_on && SW6306_ReadIBUS() < WLED_SOC_IBUS_NOLOAD))) {
         if (deattach_delay < WLED_SOC_DEATTACH_CNT) deattach_delay++;
     } else {

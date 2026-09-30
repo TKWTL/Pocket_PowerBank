@@ -411,6 +411,14 @@ void main_screen_run(app_action_t action)
             WLED_Off();
             s_wled_on = 0;
         } else {
+            /* 先开供电通路再开灯：假插入 A1 启动 SW6306 DCDC，使 WLED 电流经库仑计计入。
+             * 这里立即插（不等 load_task 的 500ms 轮询），并把 WLED 渐变闸门关掉——
+             * 由 load_task 下一轮确认 A1 在位后放行，保证"先 A1 后 PWM"的时序。
+             * 条件与 load_task 的 wled_soc_manage 对齐：充电中或真实口占用时不假插（让位）。 */
+            WLED_SetPowerPath(0);
+            if (!SW6306_IsPortC1ON() && !SW6306_IsCharging()) {
+                SW6306_PortA1Insert();
+            }
             WLED_On();   /* 开灯（恢复上次亮度，无则亮度中点） */
             s_wled_on = 1;
         }

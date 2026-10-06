@@ -31,15 +31,19 @@ SD3078_RET SD3078_BytesRead(SD3078_ARGS(uint8_t reg, uint8_t *pdata, uint16_t le
 
 /*SD3078修改对应寄存器的特定位
 /遵循读-修改-写的顺序
-/将mask中为1的位按data中的对应位修改成1或0，mask中为0的位不被修改
-/注意：写操作前需要SD3078_Unlock()
-*/
-SD3078_RET SD3078_ByteModify(SD3078_ARGS(uint8_t reg, uint8_t mask, uint8_t data))
+SD3078_RET SD3078_Unlock(SD3078_NOARG)
 {
     SD3078_FUNC_BEGIN;
-    SD3078_SPAWN_ARGS(SD3078_ByteRead, reg, SD3078_Status.sendbuf);
-    SD3078_Status.sendbuf[0] = (SD3078_Status.sendbuf[0] & (~mask)) | (data & mask);
-    SD3078_SPAWN_ARGS(SD3078_ByteWrite, reg, SD3078_Status.sendbuf[0]);
+    SD3078_MUTEX_TAKE;
+    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR2,
+                      SD3078_CTR2_WRTC1, SD3078_CTR2_WRTC1);
+    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR1,
+                      SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2,
+                      SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2);
+    if (__sd_status == I2C_OK) {
+        SD3078_Status.unlocked = 1U;
+    }
+    SD3078_MUTEX_GIVE;
     SD3078_FUNC_END;
 }
 
@@ -63,37 +67,47 @@ SD3078_RET SD3078_Unlock(SD3078_NOARG)
 /*SD3078写保护上锁
 /上锁顺序：先置WRTC2/3=0（0x0F），后置WRTC1=0（0x10）
 /使用读-改-写以保留OSF/INTAF/INTDF/BLF等标志位
-*/
 SD3078_RET SD3078_Lock(SD3078_NOARG)
 {
     SD3078_FUNC_BEGIN;
     SD3078_MUTEX_TAKE;
-    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR1, SD3078_CTR1_WRTC3|SD3078_CTR1_WRTC2, 0x00U);
-    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR2, SD3078_CTR2_WRTC1, 0x00U);
-    SD3078_Status.unlocked = 0;
+    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR1,
+                      SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2, 0x00U);
+    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR2,
+                      SD3078_CTR2_WRTC1, 0x00U);
+    if (__sd_status == I2C_OK) {
+        SD3078_Status.unlocked = 0U;
+    }
     SD3078_MUTEX_GIVE;
     SD3078_FUNC_END;
 }
 
-/* ==================== 时间格式统一收发 ====================
- * SD3078 有四组同格式（秒分时周日月年）的 7 字节时间寄存器：
- *   0x00~0x06 RTC 时间 / 0x07~0x0D 报警时间 / 0x20~0x26 历史最低温时间 / 0x27~0x2D 历史最高温时间。
- * 这里各用一份函数服务全部四组，调用方只传组基地址（见 sd3078.h 的 sd3078_time_t）。
- * BCD 与 12/24 制式处理都收在这一处，不再逐处分写。 */
+/* ==================== RTC 时间格式收发 ====================
+ * RTC 0x00~0x06 固定按 24 小时制处理；驱动不兼容 12 小时制。
+ * Alarm 的 hour/week 编码与 RTC 不完全相同，单独处理。
+ * 历史温度发生时间为 6 字节（分/时/周/日/月/年），也不复用 RTC 7 字节格式。 */
 
 /* 读一组时间到 t（BCD 原始值）；week 非 BCD 直接取低 3 位，hour 屏蔽 12_/24 位。
- * 返回非 I2C_OK 表示通信失败（调用方决定是否清 initialized）。 */
 static i2c_status_type sd3078_time_read(uint8_t base, sd3078_time_t *t)
 {
     uint8_t b[SD3078_TIME_FIELDS];
-    if(SD3078_I2C_Receive(SD3078_I2C_ADDR, base, b, SD3078_TIME_FIELDS, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
-    {
-        return I2C_ERR_INTERRUPT;
+    i2c_status_type st;
+
+    st = SD3078_I2C_Receive(SD3078_I2C_ADDR, base, b, SD3078_TIME_FIELDS,
+                            (uint8_t*)&SD3078_Status.flag);
+    if (st != I2C_OK) {
+        return st;
     }
-    /* 字节序固定为 秒 分 时 周 日 月 年，与 b[] 下标一致 */
+
+    /* 本项目只支持 24h。若芯片保留了 12h 模式数据，直接报格式错误，
+     * 不做 AM/PM 兼容转换，避免把 bit5 当成 BCD 十位。 */
+    if ((b[2] & SD3078_HOUR_1224) == 0U) {
+        return I2C_ERR_STEP_2;
+    }
+
     SD3078_SEC(t)   = b[0];
     SD3078_MIN(t)   = b[1];
-    SD3078_HOUR(t)  = (uint8_t)(b[2] & ~SD3078_HOUR_1224);
+    SD3078_HOUR(t)  = (uint8_t)(b[2] & SD3078_HOUR_MSK);
     SD3078_WEEK(t)  = (uint8_t)(b[3] & SD3078_WEEK_MSK);
     SD3078_DAY(t)   = b[4];
     SD3078_MONTH(t) = b[5];
@@ -114,41 +128,36 @@ static void sd3078_time_to_dec(sd3078_time_t *src, sd3078_time_t *dst)
 }
 
 /* 写一组时间（t 为十进制；内部转 BCD 并按 SD3078_24HOUR 置 12_/24 位）。
- * 一次性写 7 字节：单独写某一位会引起时间数据错误进位。 */
 static i2c_status_type sd3078_time_write(uint8_t base, const sd3078_time_t *t)
 {
     uint8_t b[SD3078_TIME_FIELDS];
+
     b[0] = SD3078_DecToBcd((uint8_t)SD3078_SEC(t));
     b[1] = SD3078_DecToBcd((uint8_t)SD3078_MIN(t));
-    b[2] = SD3078_DecToBcd((uint8_t)SD3078_HOUR(t));
-#if SD3078_24HOUR
-    b[2] |= SD3078_HOUR_1224;
-#endif
-    b[3] = (uint8_t)SD3078_WEEK(t);          //星期非 BCD
+    b[2] = (uint8_t)(SD3078_DecToBcd((uint8_t)SD3078_HOUR(t)) | SD3078_HOUR_1224);
+    b[3] = (uint8_t)SD3078_WEEK(t);
     b[4] = SD3078_DecToBcd((uint8_t)SD3078_DAY(t));
     b[5] = SD3078_DecToBcd((uint8_t)SD3078_MONTH(t));
     b[6] = SD3078_DecToBcd((uint8_t)SD3078_YEAR(t));
-    return SD3078_I2C_Transmit(SD3078_I2C_ADDR, base, b, SD3078_TIME_FIELDS, (uint8_t*)&SD3078_Status.flag);
+
+    return SD3078_I2C_Transmit(SD3078_I2C_ADDR, base, b, SD3078_TIME_FIELDS,
+                               (uint8_t*)&SD3078_Status.flag);
 }
 
 /******************************实时时钟操作区**********************************/
 /*读取实时时钟
 /当芯片收到读实时时钟数据命令时，所有实时时钟数据被锁存（走时不受影响），可避免错读
 /因此一次性读取00H~06H共7字节
-*/
 SD3078_RET SD3078_TimeLoad(SD3078_NOARG)
 {
-    SD3078_FUNC_BEGIN;
+    i2c_status_type st;
     SD3078_MUTEX_TAKE;
-    if(sd3078_time_read(SD3078_STRG_SEC, &SD3078_Status.time) != I2C_OK)
-    {
-        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮 load_task 重新初始化 */
-        SD3078_MUTEX_GIVE;
-        SD3078_FUNC_END;
+    st = sd3078_time_read(SD3078_STRG_SEC, &SD3078_Status.time);
+    if (st == I2C_OK) {
+        sd3078_time_to_dec(&SD3078_Status.time, &SD3078_Status.time_dec);
     }
-    sd3078_time_to_dec(&SD3078_Status.time, &SD3078_Status.time_dec);
     SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
+    return st;
 }
 /* 时间读取 API：十进制镜像（TimeLoad 后有效）与原始 BCD 镜像各一组。
  * 现在只是统一结构体的取值，不再是 14 个手写样板。 */
@@ -192,59 +201,157 @@ SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(const sd3078_time_t *t))
     SD3078_FUNC_END;
 }
 
-/* 请求设置时间（UI 调用，十进制输入；写入句柄待 load_task 提交，UI 不直接访问 I2C） */
-SD3078_RET SD3078_RequestTimeSet(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min, uint8_t sec))
+SD3078_RET SD3078_RequestTimeSet(
+    SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day,
+                uint8_t hour, uint8_t min, uint8_t sec))
 {
-    SD3078_FUNC_BEGIN;
-    SD3078_Status.set_year  = year;
-    SD3078_Status.set_month = month;
-    SD3078_Status.set_day   = day;
-    SD3078_Status.set_hour  = hour;
-    SD3078_Status.set_min   = min;
-    SD3078_Status.set_sec   = sec;
-    SD3078_Status.time_set_pending = 1;
-    SD3078_FUNC_END;
+    if (year > 99U || month < 1U || month > 12U || day < 1U || day > 31U ||
+        hour > 23U || min > 59U || sec > 59U) {
+        return I2C_ERR_STEP_1;
+    }
+
+    taskENTER_CRITICAL();
+    SD3078_YEAR(&SD3078_Status.set_time)  = year;
+    SD3078_MONTH(&SD3078_Status.set_time) = month;
+    SD3078_DAY(&SD3078_Status.set_time)   = day;
+    SD3078_HOUR(&SD3078_Status.set_time)  = hour;
+    SD3078_MIN(&SD3078_Status.set_time)   = min;
+    SD3078_SEC(&SD3078_Status.set_time)   = sec;
+    SD3078_Status.time_set_mask |= 0x3FU;
+    taskEXIT_CRITICAL();
+    return I2C_OK;
+}
+
+SD3078_RET SD3078_RequestTimeFieldSet(
+    SD3078_ARGS(sd3078_time_field_t field, uint8_t value))
+{
+    uint8_t bit;
+
+    switch (field) {
+    case SD3078_TIME_FIELD_SEC:
+        if (value > 59U) return I2C_ERR_STEP_1;
+        bit = 0U;
+        break;
+    case SD3078_TIME_FIELD_MIN:
+        if (value > 59U) return I2C_ERR_STEP_1;
+        bit = 1U;
+        break;
+    case SD3078_TIME_FIELD_HOUR:
+        if (value > 23U) return I2C_ERR_STEP_1;
+        bit = 2U;
+        break;
+    case SD3078_TIME_FIELD_DAY:
+        if (value < 1U || value > 31U) return I2C_ERR_STEP_1;
+        bit = 3U;
+        break;
+    case SD3078_TIME_FIELD_MONTH:
+        if (value < 1U || value > 12U) return I2C_ERR_STEP_1;
+        bit = 4U;
+        break;
+    case SD3078_TIME_FIELD_YEAR:
+        if (value > 99U) return I2C_ERR_STEP_1;
+        bit = 5U;
+        break;
+    default:
+        return I2C_ERR_STEP_1;
+    }
+
+    taskENTER_CRITICAL();
+    switch (field) {
+    case SD3078_TIME_FIELD_SEC:   SD3078_SEC(&SD3078_Status.set_time) = value; break;
+    case SD3078_TIME_FIELD_MIN:   SD3078_MIN(&SD3078_Status.set_time) = value; break;
+    case SD3078_TIME_FIELD_HOUR:  SD3078_HOUR(&SD3078_Status.set_time) = value; break;
+    case SD3078_TIME_FIELD_DAY:   SD3078_DAY(&SD3078_Status.set_time) = value; break;
+    case SD3078_TIME_FIELD_MONTH: SD3078_MONTH(&SD3078_Status.set_time) = value; break;
+    case SD3078_TIME_FIELD_YEAR:  SD3078_YEAR(&SD3078_Status.set_time) = value; break;
+    default: break;
+    }
+    SD3078_Status.time_set_mask |= (uint8_t)(1U << bit);
+    taskEXIT_CRITICAL();
+    return I2C_OK;
 }
 
 /* 检测并提交时间设置请求（load_task 0.5s 周期调用；星期保留句柄镜像当前值）
- * 内部依次调用 Unlock/TimeSetDec/Lock（各含互斥），自身不持锁，避免嵌套死锁 */
 SD3078_RET SD3078_TimeSetProcess(SD3078_NOARG)
 {
+    sd3078_time_t req;
     sd3078_time_t t;
-    SD3078_FUNC_BEGIN;
-    if (SD3078_Status.time_set_pending) {
-        SD3078_SEC(&t)   = SD3078_Status.set_sec;
-        SD3078_MIN(&t)   = SD3078_Status.set_min;
-        SD3078_HOUR(&t)  = SD3078_Status.set_hour;
-        SD3078_WEEK(&t)  = SD3078_WEEK(&SD3078_Status.time_dec);   //星期不在菜单中设置，沿用当前值
-        SD3078_DAY(&t)   = SD3078_Status.set_day;
-        SD3078_MONTH(&t) = SD3078_Status.set_month;
-        SD3078_YEAR(&t)  = SD3078_Status.set_year;
-        SD3078_SPAWN_NOARG(SD3078_Unlock);
-        SD3078_SPAWN_ARGS(SD3078_TimeSetDec, &t);
-        SD3078_SPAWN_NOARG(SD3078_Lock);
-        SD3078_Status.time_set_pending = 0;
+    uint8_t mask;
+    i2c_status_type st;
+    i2c_status_type lock_st;
+
+    /* 原子取走本批请求。UI 若在 I2C 提交期间再次修改同一字段，会重新置位，
+     * 不会被本批成功后的清除动作吞掉。 */
+    taskENTER_CRITICAL();
+    mask = SD3078_Status.time_set_mask;
+    req = SD3078_Status.set_time;
+    SD3078_Status.time_set_mask &= (uint8_t)~mask;
+    taskEXIT_CRITICAL();
+
+    if (mask == 0U) {
+        return I2C_OK;
     }
-    SD3078_FUNC_END;
+
+    /* 关键修复：提交前实时读 RTC，而不是使用“进入 Time 页时”的旧快照。
+     * 只覆盖用户本次修改的字段，其他字段（尤其秒）保持此刻真实值。 */
+    st = SD3078_TimeLoad();
+    if (st != I2C_OK) {
+        taskENTER_CRITICAL();
+        SD3078_Status.time_set_mask |= mask;
+        taskEXIT_CRITICAL();
+        return st;
+    }
+
+    t = SD3078_Status.time_dec;
+    if (mask & (1U << 0)) SD3078_SEC(&t)   = SD3078_SEC(&req);
+    if (mask & (1U << 1)) SD3078_MIN(&t)   = SD3078_MIN(&req);
+    if (mask & (1U << 2)) SD3078_HOUR(&t)  = SD3078_HOUR(&req);
+    if (mask & (1U << 3)) SD3078_DAY(&t)   = SD3078_DAY(&req);
+    if (mask & (1U << 4)) SD3078_MONTH(&t) = SD3078_MONTH(&req);
+    if (mask & (1U << 5)) SD3078_YEAR(&t)  = SD3078_YEAR(&req);
+
+    st = SD3078_Unlock();
+    if (st == I2C_OK) {
+        st = SD3078_TimeSetDec(&t);   /* 仍一次性写满 0x00~0x06 */
+        lock_st = SD3078_Lock();      /* 无论写是否成功都尝试重新上锁 */
+        if (st == I2C_OK) {
+            st = lock_st;
+        }
+    }
+
+    if (st != I2C_OK) {
+        taskENTER_CRITICAL();
+        SD3078_Status.time_set_mask |= mask;
+        taskEXIT_CRITICAL();
+        return st;
+    }
+
+    /* 立即更新十进制镜像，下一次 TimeLoad 会再用硬件值校正。 */
+    SD3078_Status.time_dec = t;
+    return I2C_OK;
 }
 
-/******************************时间报警操作区**********************************/
-SD3078_RET SD3078_AlarmLoad(SD3078_NOARG)//读取报警镜像（07H~0EH：时间7字节 + 报警允许）
+SD3078_RET SD3078_AlarmLoad(SD3078_NOARG)
 {
-    uint8_t en;
-    SD3078_FUNC_BEGIN;
+    uint8_t b[SD3078_TIME_FIELDS + 1U];
+    i2c_status_type st;
+
     SD3078_MUTEX_TAKE;
-    /* 时间部分复用统一时间读取（0x07~0x0D），报警允许位 0x0E 单独读 */
-    if(sd3078_time_read(SD3078_STRG_ALARM_SEC, &SD3078_Status.alarm_time) != I2C_OK
-       || SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_CTRG_ALARM_EN, &en, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
-    {
-        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮重新初始化 */
-        SD3078_MUTEX_GIVE;
-        SD3078_FUNC_END;
+    st = SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_ALARM_SEC,
+                            b, sizeof(b), (uint8_t*)&SD3078_Status.flag);
+    if (st == I2C_OK) {
+        SD3078_SEC(&SD3078_Status.alarm_time)   = b[0];
+        SD3078_MIN(&SD3078_Status.alarm_time)   = b[1];
+        SD3078_HOUR(&SD3078_Status.alarm_time)  = (uint8_t)(b[2] & SD3078_HOUR_MSK);
+        /* Alarm week 是 7 位星期掩码，不是 RTC 的 0~6 编码。 */
+        SD3078_WEEK(&SD3078_Status.alarm_time)  = (uint8_t)(b[3] & SD3078_ALARMEN_MSK);
+        SD3078_DAY(&SD3078_Status.alarm_time)   = b[4];
+        SD3078_MONTH(&SD3078_Status.alarm_time) = b[5];
+        SD3078_YEAR(&SD3078_Status.alarm_time)  = b[6];
+        SD3078_Status.alarm_en = (uint8_t)(b[7] & SD3078_ALARMEN_MSK);
     }
-    SD3078_Status.alarm_en = en;
     SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
+    return st;
 }
 
 /*设置时间报警
@@ -252,30 +359,26 @@ SD3078_RET SD3078_AlarmLoad(SD3078_NOARG)//读取报警镜像（07H~0EH：时间
 /  SD3078_ALARMEN_EAS|SD3078_ALARMEN_EAMN|SD3078_ALARMEN_EAH  每天固定时分秒报警
 /  SD3078_ALARMEN_EAD|SD3078_ALARMEN_EAMO|SD3078_ALARMEN_EAY  每年固定日期报警
 /注意：日报警与星期报警同时允许时只有日报警有效
-*/
 SD3078_RET SD3078_AlarmSetDec(SD3078_ARGS(const sd3078_time_t *t, uint8_t en))
 {
     uint8_t b[SD3078_TIME_FIELDS + 1U];
-    SD3078_FUNC_BEGIN;
-    SD3078_MUTEX_TAKE;
-    /* 报警组 = 0x07~0x0D 的 7 字节同格式时间 + 0x0E 报警允许；
-     * 时间部分复用同一套格式逻辑，只有"多了 en 这一字节写"是报警特有的。 */
+    i2c_status_type st;
+
     b[0] = SD3078_DecToBcd((uint8_t)SD3078_SEC(t));
     b[1] = SD3078_DecToBcd((uint8_t)SD3078_MIN(t));
-    b[2] = SD3078_DecToBcd((uint8_t)SD3078_HOUR(t));
-#if SD3078_24HOUR
-    b[2] |= SD3078_HOUR_1224;
-#endif
-    b[3] = (uint8_t)SD3078_WEEK(t);          //星期非 BCD
+    /* Alarm hour 没有 RTC hour 的 bit7 12/24 标志。 */
+    b[2] = (uint8_t)(SD3078_DecToBcd((uint8_t)SD3078_HOUR(t)) & SD3078_HOUR_MSK);
+    b[3] = (uint8_t)(SD3078_WEEK(t) & SD3078_ALARMEN_MSK); /* 星期 bitmask */
     b[4] = SD3078_DecToBcd((uint8_t)SD3078_DAY(t));
     b[5] = SD3078_DecToBcd((uint8_t)SD3078_MONTH(t));
     b[6] = SD3078_DecToBcd((uint8_t)SD3078_YEAR(t));
-    b[7] = en;
-    SD3078_EXEC(SD3078_I2C_Transmit(SD3078_I2C_ADDR, SD3078_STRG_ALARM_SEC, b, SD3078_TIME_FIELDS + 1U, (uint8_t*)&SD3078_Status.flag));
-    SD3078_UNTIL(SD3078_Status.flag);
-    //每一次对时间报警允许寄存器的写入都会清INTAF为"0"
+    b[7] = (uint8_t)(en & SD3078_ALARMEN_MSK);
+
+    SD3078_MUTEX_TAKE;
+    st = SD3078_I2C_Transmit(SD3078_I2C_ADDR, SD3078_STRG_ALARM_SEC,
+                             b, sizeof(b), (uint8_t*)&SD3078_Status.flag);
     SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
+    return st;
 }
 
 SD3078_RET SD3078_AlarmClear(SD3078_NOARG)//清除报警中断标志（INTAF写0）
@@ -292,21 +395,19 @@ uint8_t SD3078_HasAlarm(void)//查询报警中断标志（INTAF）
     return SD3078_Status.ctr1 & SD3078_CTR1_INTAF;
 }
 
-/******************************温度操作区**************************************/
-SD3078_RET SD3078_TempLoad(SD3078_NOARG)//读取温度镜像（0x16）
+SD3078_RET SD3078_TempLoad(SD3078_NOARG)
 {
-    volatile uint8_t t = 0U;         /* 读缓冲：失败时不改动镜像 */
-    SD3078_FUNC_BEGIN;
+    uint8_t t = 0U;
+    i2c_status_type st;
+
     SD3078_MUTEX_TAKE;
-    if(SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_TEMP, (uint8_t*)&t, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
-    {
-        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮 load_task 重新初始化 */
-        SD3078_MUTEX_GIVE;
-        SD3078_FUNC_END;
+    st = SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_TEMP,
+                            &t, 1U, (uint8_t*)&SD3078_Status.flag);
+    if (st == I2C_OK) {
+        SD3078_Status.temp = (int8_t)t;
     }
-    SD3078_Status.temp = (int8_t)t;
     SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
+    return st;
 }
 
 int8_t SD3078_ReadTemp(void)//读取温度（°C，补码，如0x10=16°C、0xFE=-2°C）
@@ -335,25 +436,27 @@ SD3078_RET SD3078_TempHistoryLoad(SD3078_NOARG)//读取历史高低温值（0x1E
     SD3078_FUNC_END;
 }
 
-/******************************电池与充电操作区********************************/
-SD3078_RET SD3078_BattLoad(SD3078_NOARG)//读取电池电压镜像（1AH/1BH合成9位）
+SD3078_RET SD3078_BattLoad(SD3078_NOARG)
 {
-    volatile uint8_t ctr5 = 0U, bval = 0U;   /* 读缓冲：失败时不改动镜像 */
-    SD3078_FUNC_BEGIN;
+    uint8_t ctr5 = 0U;
+    uint8_t bval = 0U;
+    i2c_status_type st;
+
     SD3078_MUTEX_TAKE;
-    if(SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_CTR5, (uint8_t*)&ctr5, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK
-       || SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_BAT_VAL, (uint8_t*)&bval, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
-    {
-        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮 load_task 重新初始化 */
-        SD3078_MUTEX_GIVE;
-        SD3078_FUNC_END;
+    st = SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_CTR5,
+                            &ctr5, 1U, (uint8_t*)&SD3078_Status.flag);
+    if (st == I2C_OK) {
+        st = SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_BAT_VAL,
+                                &bval, 1U, (uint8_t*)&SD3078_Status.flag);
     }
-    SD3078_Status.ctr5 = ctr5;
-    SD3078_Status.sendbuf[0] = bval;
-    //9位数据：1AH[7](BAT8_VAL)<<8 | 1BH(VBAT_VAL)，如130H=304=3.04V
-    SD3078_Status.batt = ((uint16_t)(SD3078_Status.ctr5 & SD3078_CTR5_BAT8_VAL) << 1) | SD3078_Status.sendbuf[0];
+    if (st == I2C_OK) {
+        SD3078_Status.ctr5 = ctr5;
+        SD3078_Status.sendbuf[0] = bval;
+        SD3078_Status.batt =
+            ((uint16_t)(ctr5 & SD3078_CTR5_BAT8_VAL) << 1) | bval;
+    }
     SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
+    return st;
 }
 
 uint16_t SD3078_ReadBatt(void)//读取电池电压（单位：mV，如3040）
@@ -448,27 +551,72 @@ SD3078_RET SD3078_F32KSet(SD3078_ARGS(uint8_t enable))
     SD3078_FUNC_END;
 }
 
-/******************************用户RAM与ID操作区*******************************/
-SD3078_RET SD3078_SramWrite(SD3078_ARGS(uint8_t offset, uint8_t *pdata, uint16_t len))//写用户RAM
+SD3078_RET SD3078_SramWrite(
+    SD3078_ARGS(uint8_t offset, const uint8_t *pdata, uint16_t len))
 {
-    SD3078_FUNC_BEGIN;
-    SD3078_MUTEX_TAKE;
-    if(offset + len <= SD3078_RAM_LEN)
-        SD3078_EXEC(SD3078_I2C_Transmit(SD3078_I2C_ADDR, SD3078_RAM_START + offset, pdata, len, (uint8_t*)&SD3078_Status.flag));
-    SD3078_UNTIL(SD3078_Status.flag);
-    SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
-}
+    i2c_status_type st = I2C_OK;
+    i2c_status_type tmp;
 
-SD3078_RET SD3078_SramRead(SD3078_ARGS(uint8_t offset, uint8_t *pdata, uint16_t len))//读用户RAM
-{
-    SD3078_FUNC_BEGIN;
+    if ((len != 0U && pdata == NULL) ||
+        ((uint32_t)offset + (uint32_t)len > SD3078_RAM_LEN)) {
+        return I2C_ERR_STEP_1;
+    }
+    if (len == 0U) {
+        return I2C_OK;
+    }
+
+    /* 用户 SRAM 同样受 WRTC1/2/3 写保护。整个 unlock -> SRAM write -> lock
+     * 放在同一个 I2C mutex 临界区内，避免其它设备操作插入解锁窗口。 */
     SD3078_MUTEX_TAKE;
-    if(offset + len <= SD3078_RAM_LEN)
-        SD3078_EXEC(SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_RAM_START + offset, pdata, len, (uint8_t*)&SD3078_Status.flag));
-    SD3078_UNTIL(SD3078_Status.flag);
+
+    tmp = SD3078_ByteModify(SD3078_CTRG_CTR2, SD3078_CTR2_WRTC1, SD3078_CTR2_WRTC1);
+    if (tmp != I2C_OK) st = tmp;
+    if (st == I2C_OK) {
+        tmp = SD3078_ByteModify(SD3078_CTRG_CTR1,
+                                SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2,
+                                SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2);
+        if (tmp != I2C_OK) st = tmp;
+    }
+    if (st == I2C_OK) {
+        SD3078_Status.unlocked = 1U;
+        st = SD3078_I2C_Transmit(SD3078_I2C_ADDR,
+                                 (uint8_t)(SD3078_RAM_START + offset),
+                                 (uint8_t *)pdata, len,
+                                 (uint8_t*)&SD3078_Status.flag);
+    }
+
+    /* 无论 payload 写入是否成功都尝试重新上锁；优先返回第一个错误。 */
+    tmp = SD3078_ByteModify(SD3078_CTRG_CTR1,
+                            SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2, 0x00U);
+    if (st == I2C_OK && tmp != I2C_OK) st = tmp;
+    tmp = SD3078_ByteModify(SD3078_CTRG_CTR2, SD3078_CTR2_WRTC1, 0x00U);
+    if (st == I2C_OK && tmp != I2C_OK) st = tmp;
+    if (tmp == I2C_OK) {
+        SD3078_Status.unlocked = 0U;
+    }
+
     SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
+    return st;
+}
+SD3078_RET SD3078_SramRead(
+    SD3078_ARGS(uint8_t offset, uint8_t *pdata, uint16_t len))
+{
+    i2c_status_type st;
+
+    if ((len != 0U && pdata == NULL) ||
+        ((uint32_t)offset + (uint32_t)len > SD3078_RAM_LEN)) {
+        return I2C_ERR_STEP_1;
+    }
+    if (len == 0U) {
+        return I2C_OK;
+    }
+
+    SD3078_MUTEX_TAKE;
+    st = SD3078_I2C_Receive(SD3078_I2C_ADDR,
+                            (uint8_t)(SD3078_RAM_START + offset),
+                            pdata, len, (uint8_t*)&SD3078_Status.flag);
+    SD3078_MUTEX_GIVE;
+    return st;
 }
 
 SD3078_RET SD3078_IDLoad(SD3078_NOARG)//读取芯片ID（72H~79H共8字节）
@@ -514,39 +662,28 @@ uint8_t SD3078_ReadID(uint8_t idx)
  * ② 低功耗：禁止 32K 输出（F32K=1）；禁止报警/频率/倒计时中断输出（INTFE/INTAE/INTDE=0）；
  *    VBAT 模式下禁止 INT 输出（FOBAT=0）；INT 脚高阻（INTS=00 + CTR4.INTS_E=000）。
  *    注：充电功能开启后 VDD 电流会增加约 80uA，属正常现象。
- * 注意：本函数为正式初始化（上电即调用），不配置时间/报警/倒计时等；
- *       需要温度报警等完整配置时，再调用SD3078_FullInit()。
- *       函数自带initialized判断，在线且成功后只执行一次。
- */
-SD3078_RET SD3078_Init(SD3078_NOARG)
+SD3078_RET SD3078_FullInit(SD3078_NOARG)
 {
-    SD3078_FUNC_BEGIN;
-    if(SD3078_Status.initialized == 0)
-    {
-        //读取CTR1校验芯片在线（读到0xFF视为无设备/总线浮空）
-        //注意：必须在任何写操作之前读——RTCF 会在上电后第一次有效写时被芯片清零，
-        //      PMF/RTCF/OSF 在此一次性快照，供 SD3078_ReadPMF/RTCF/OSF 查询
-        SD3078_SPAWN_ARGS(SD3078_ByteRead, SD3078_CTRG_CTR1, &SD3078_Status.ctr1);
-        if(SD3078_Status.ctr1 != 0xFFU)   //读到0xFF视为无设备/总线浮空 → 不置 initialized，下轮重试
-        {
-            //读取芯片ID（一次性快照）
-            SD3078_SPAWN_NOARG(SD3078_IDLoad);
-            //解锁寄存器写入（WRTC1/2/3=1）
-            SD3078_SPAWN_NOARG(SD3078_Unlock);
-            //每次上电重置充电寄存器：默认不充电（由菜单/上层手动控制充电）
-            SD3078_SPAWN_ARGS(SD3078_ChargeSet, SD3078_CHARGE_ENABLE, SD3078_CHARGE_RES_SEL);
-            //低功耗：禁止32K输出（F32K=1）
-            SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR3, SD3078_CTR3_F32K, SD3078_CTR3_F32K);
-            //低功耗：禁止报警/频率/倒计时中断输出，VBAT模式下禁止INT输出（FOBAT=0）
-            SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR2, SD3078_CTR2_INTFE|SD3078_CTR2_INTAE|SD3078_CTR2_INTDE|SD3078_CTR2_FOBAT, 0x00U);
-            //低功耗：INT脚高阻禁止输出（INTS=00时由CTR4的INTS_E=000控制）
-            SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR4, SD3078_CTR4_INTS_E2|SD3078_CTR4_INTS_E1|SD3078_CTR4_INTS_E0, 0x00U);
-            //写完成后上锁，避免误写
-            SD3078_SPAWN_NOARG(SD3078_Lock);
-            SD3078_Status.initialized = 1;
-        }
+    i2c_status_type st;
+    i2c_status_type lock_st;
+
+    st = SD3078_ByteRead(SD3078_CTRG_CTR1, &SD3078_Status.ctr1);
+    if (st != I2C_OK) return st;
+    if (SD3078_Status.ctr1 == 0xFFU) return I2C_ERR_ADDR;
+
+    st = SD3078_IDLoad();
+    if (st != I2C_OK) return st;
+
+    st = SD3078_Unlock();
+    if (st != I2C_OK) return st;
+
+    st = SD3078_ChargeSet(SD3078_CHARGE_ENABLE, SD3078_CHARGE_RES_SEL);
+    if (st == I2C_OK) {
+        st = SD3078_TempAlarmSet(SD3078_TEMP_ALARM_LOW, SD3078_TEMP_ALARM_HIGH);
     }
-    SD3078_FUNC_END;
+
+    lock_st = SD3078_Lock();
+    return (st != I2C_OK) ? st : lock_st;
 }
 
 /*SD3078完整初始化（在正式SD3078_Init基础上追加温度报警阈值等完整配置）
@@ -573,7 +710,4 @@ SD3078_RET SD3078_FullInit(SD3078_NOARG)
     SD3078_FUNC_END;
 }
 
-uint8_t SD3078_IsInitialized(void)//检测SD3078是否已初始化过
-{
-    return SD3078_Status.initialized;
-}
+

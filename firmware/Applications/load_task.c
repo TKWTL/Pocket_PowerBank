@@ -10,17 +10,57 @@
  */
 #include "applications.h"
 
+/* SD3078 不再维护 initialized flag；应用层只根据每次 API 的 i2c_status_type
+ * 决定是否继续使用/重试初始化。 */
+static i2c_status_type s_sd3078_status = I2C_ERR_INTERRUPT;
+static uint8_t s_nvm_ready;
+
+static i2c_status_type sd3078_refresh_mirrors(void)
+{
+    i2c_status_type st;
+
+    st = SD3078_TimeLoad();
+    if (st != I2C_OK) return st;
+    st = SD3078_TempLoad();
+    if (st != I2C_OK) return st;
+    return SD3078_BattLoad();
+}
+
+static void sd3078_try_init(void)
+{
+    i2c_status_type st;
+
+    if (s_sd3078_status == I2C_OK) return;
+
+    s_sd3078_status = SD3078_Init();
+    if (s_sd3078_status != I2C_OK) return;
+
+    /* NVM 原型只在 SD3078 已可靠在线后初始化一次。CRC 不合法会自动写入默认值。 */
+    if (!s_nvm_ready) {
+        st = nvm_init();
+        if (st != I2C_OK) {
+            s_sd3078_status = st;
+            return;
+        }
+        s_nvm_ready = 1U;
+
+        /* 三个 float 中先让 shunt 校准值直接参与现有 SW6306 读数比例，便于实机验证。 */
+        SW6306_SetBattRShunt(nvm_get_shunt_mohm());
+    }
+}
+
 /* 一轮完整读取（唤醒预取 / 事件即时刷新）：SD3078 + SC7A20 + SW6306 镜像。
  * 读取顺序：先读 SD3078/SC7A20（唤醒后立即就绪），SW6306 放最后——
  * 其 I2C 操作天然为 SW6306 从 LPSet 唤醒留出就绪时间；唤醒预取时 SW6306 前再
  * 加稳定延迟，避免读到 ADC 未更新的无效值（VBUS/IBAT 等相邻通道 raw 相同）。 */
 static void data_refresh_all(void)
 {
-    if (SD3078_IsInitialized()) {
-        SD3078_TimeLoad();       /* 时间镜像（硬件锁存防错读，十进制同步） */
-        SD3078_TempLoad();       /* 温度镜像 */
-        SD3078_BattLoad();       /* 备用电池电压镜像 */
-        SD3078_TimeSetProcess(); /* 检测并提交 UI 的时间设置请求 */
+    sd3078_try_init();
+    if (s_sd3078_status == I2C_OK) {
+        s_sd3078_status = sd3078_refresh_mirrors();
+        if (s_sd3078_status == I2C_OK) {
+            s_sd3078_status = SD3078_TimeSetProcess();
+        }
     }
     if (SC7A20_IsInitialized()) {
         SC7A20_AccelLoad();      /* 三轴加速度原始数据镜像（Read*_mg 读它换算） */
@@ -151,26 +191,31 @@ void load_task(void *pvParameters)
             continue;
         }
 
+        /* 时间设置请求每 10ms 检查一次。无 pending 时函数立即返回，不产生 I2C；
+         * 有修改时可在下一轮状态机内实时读 RTC 并整组写回，而不是等 500ms。 */
+        if (s_sd3078_status == I2C_OK) {
+            i2c_status_type st = SD3078_TimeSetProcess();
+            if (st != I2C_OK) s_sd3078_status = st;
+        }
+
         if (pm_api_data_refresh_pending() != 0) {
             /* 数据刷新请求（唤醒预取 / RUN 态事件）：立即一轮完整读取 */
             data_refresh_all();
             pm_api_data_refresh_done();   /* 清请求 + 置位唤醒使能（数据就绪） */
         } else if (++period_cnt >= 50) {  /* 50×10ms = 500ms 周期轮询 */
             period_cnt = 0;
-            if (!SD3078_IsInitialized()) {
-                SD3078_Init();       /* 正式初始化：默认不充电 + 低功耗（内部只执行一次） */
-            }
+
+            sd3078_try_init();
+
             if (!SC7A20_IsInitialized()) {
                 SC7A20_Init();       /* 正式初始化：H_LACTIVE=1 INT极性修正 + ODR 1Hz */
                 /* SC7A20 上电/改极性可能产生沿，清 EXINT8 pending 防伪中断 */
                 exint_flag_clear(EXINT_LINE_8);
                 NVIC_ClearPendingIRQ(EXINT9_5_IRQn);
             }
-            if (SD3078_IsInitialized()) {
-                SD3078_TimeLoad();       /* 时间镜像（硬件锁存防错读，十进制同步） */
-                SD3078_TempLoad();       /* 温度镜像 */
-                SD3078_BattLoad();       /* 备用电池电压镜像 */
-                SD3078_TimeSetProcess(); /* 检测并提交 UI 的时间设置请求 */
+
+            if (s_sd3078_status == I2C_OK) {
+                s_sd3078_status = sd3078_refresh_mirrors();
             }
             if (SC7A20_IsInitialized()) {
                 SC7A20_AccelLoad();      /* 三轴加速度原始数据镜像（Read*_mg 读它换算） */

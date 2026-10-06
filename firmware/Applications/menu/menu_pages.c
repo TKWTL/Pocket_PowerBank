@@ -263,31 +263,59 @@ static uint8_t s_rtc_charge = 0;    /* 备用电池充电：1=开 0=关（默认
 /* 进入时间页：从 SD3078 驱动句柄镜像读当前时间（load_task 定期刷新），填充设置变量 */
 void menu_time_read(void)
 {
-    if (SD3078_IsInitialized()) {
-        s_time_sec   = SD3078_ReadSec();
-        s_time_min   = SD3078_ReadMin();
-        s_time_hour  = SD3078_ReadHour();
-        s_time_day   = SD3078_ReadDay();
-        s_time_month = SD3078_ReadMonth();
-        s_time_year  = SD3078_ReadYear();
-    }
+    s_time_sec   = SD3078_ReadSec();
+    s_time_min   = SD3078_ReadMin();
+    s_time_hour  = SD3078_ReadHour();
+    s_time_day   = SD3078_ReadDay();
+    s_time_month = SD3078_ReadMonth();
+    s_time_year  = SD3078_ReadYear();
 }
 
 /* 任一时间字段步进后：请求设置时间（写入 SD3078 驱动句柄，由 load_task 经
  * SD3078_TimeSetProcess 提交写回；星期保留，不在菜单中设置） */
 static void time_apply(menu_item_t *it)
 {
-    (void)it;
-    SD3078_RequestTimeSet((uint8_t)s_time_year, (uint8_t)s_time_month, (uint8_t)s_time_day,
-                          (uint8_t)s_time_hour, (uint8_t)s_time_min, (uint8_t)s_time_sec);
+    i2c_status_type st = I2C_ERR_STEP_1;
+
+    /* 只提交刚修改的字段。load_task 真正写入前会重新读取硬件当前 RTC，
+     * 把这个字段覆盖进去，再一次性写满 7 字节，避免秒/分使用进入页面时的旧快照。 */
+    if (it && it->value_ptr == &s_time_sec) {
+        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_SEC, (uint8_t)s_time_sec);
+    } else if (it && it->value_ptr == &s_time_min) {
+        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_MIN, (uint8_t)s_time_min);
+    } else if (it && it->value_ptr == &s_time_hour) {
+        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_HOUR, (uint8_t)s_time_hour);
+    } else if (it && it->value_ptr == &s_time_day) {
+        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_DAY, (uint8_t)s_time_day);
+    } else if (it && it->value_ptr == &s_time_month) {
+        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_MONTH, (uint8_t)s_time_month);
+    } else if (it && it->value_ptr == &s_time_year) {
+        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_YEAR, (uint8_t)s_time_year);
+    }
+
+    if (st == I2C_OK) {
+        /* load_task 10ms 状态机尽快处理 pending，不等下一次 500ms 周期。 */
+        pm_api_request_data_refresh();
+    }
 }
 
 /* 备用电池充电开关：直接写 SD3078 充电寄存器（限流电阻用配置宏 SD3078_CHARGE_RES_SEL） */
 static void rtc_charge_apply(menu_item_t *it)
 {
+    i2c_status_type st;
+    i2c_status_type lock_st;
+
     (void)it;
-    if (SD3078_IsInitialized()) {
-        SD3078_ChargeSet(s_rtc_charge ? 1U : 0U, SD3078_CHARGE_RES_SEL);
+    st = SD3078_Unlock();
+    if (st == I2C_OK) {
+        st = SD3078_ChargeSet(s_rtc_charge ? 1U : 0U, SD3078_CHARGE_RES_SEL);
+        lock_st = SD3078_Lock();
+        if (st == I2C_OK) st = lock_st;
+    }
+
+    /* 写失败时把 UI 开关恢复，避免界面状态与芯片实际状态相反。 */
+    if (st != I2C_OK) {
+        s_rtc_charge = s_rtc_charge ? 0U : 1U;
     }
 }
 
@@ -300,7 +328,7 @@ static const menu_item_t menu_items_time[] = {
     MENU_ITEM_VALUE_("Day",   &s_time_day,   1, 31, 1, NULL, time_apply),
     MENU_ITEM_VALUE_("Month", &s_time_month, 1, 12, 1, NULL, time_apply),
     MENU_ITEM_VALUE_("Year",  &s_time_year,  0, 99, 1, NULL, time_apply),
-    /* 备用电池充电（SD3078 VBAT 充电电路，默认开） */
+    /* 备用电池充电（SD3078 VBAT 充电电路，默认关） */
     MENU_ITEM_TOGGLE_("Backup Charge", &s_rtc_charge, "On", "Off", rtc_charge_apply),
 };
 MENU_PAGE_("Time", menu_page_time, menu_items_time);

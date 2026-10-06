@@ -6,7 +6,7 @@
 #define __SD3078_H__
 
 #ifdef __cplusplus
-extern C {
+extern "C" {
 #endif
 
 #include "stdint.h"
@@ -41,16 +41,10 @@ extern C {
 #define SD3078_MUTEX_TAKE   xSemaphoreTake(mutex_i2c_handle, portMAX_DELAY)
 #define SD3078_MUTEX_GIVE   xSemaphoreGive(mutex_i2c_handle)
 
-/* ==================== 统一时间结构体 ====================
- * 参考 NUEDC framework 的 time.c/.h（统一时间结构体，避免各驱动各写一套 set/get）：
- *  - 字段顺序统一为「秒 分 时 周 日 月 年」，正好等于 SD3078 四组时间寄存器
- *    的物理顺序，因此同一套收发函数可服务全部四组：
- *      0x00~0x06  RTC 时间
- *      0x07~0x0D  报警时间（0x0E 报警允许另放，不在本结构体内）
- *      0x20~0x26  历史最低温发生时间
- *      0x27~0x2D  历史最高温发生时间
- *  - 收发走字节池 b[]，用下面的 SEC/MIN/... 宏逐字节取用（不依赖编译器字节序、
- *    不用匿名 union 的类型双关），字段顺序仍只在这一处定义。 */
+/* ==================== 时间结构体 ====================
+ * RTC 0x00~0x06 使用「秒 分 时 周 日 月 年」7 字节结构，固定 24h。
+ * Alarm 虽复用同一容器，但 hour/week 编码与 RTC 不同，收发函数单独处理。
+ * 历史温度发生时间只有 6 字节（分/时/周/日/月/年），不复用本结构体收发。 */
 #define SD3078_TIME_FIELDS  7
 
 /* 全部字段都是 uint8_t 且按寄存器顺序排列，因此结构体恰好 7 字节、无填充、
@@ -323,7 +317,7 @@ uint8_t SD3078_ReadMonthBCD(void);             //读取月（原始BCD镜像）
 uint8_t SD3078_ReadYearBCD(void);              //读取年（原始BCD镜像）
 uint8_t SD3078_BcdToDec(uint8_t bcd);          //BCD → 十进制（时间/日期寄存器为 BCD 码）
 uint8_t SD3078_DecToBcd(uint8_t dec);          //十进制 → BCD（时间/日期寄存器为 BCD 码）
-SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(const sd3078_time_t *t));//一次性写7字节时间（t 传十进制值，内部转 BCD 并处理 12_/24 位）
+SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(const sd3078_time_t *t));//一次性写7字节RTC时间（十进制输入，固定24h编码）
 SD3078_RET SD3078_RequestTimeSet(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min, uint8_t sec));//请求整组时间（十进制；提交时仍先实时读RTC）
 SD3078_RET SD3078_RequestTimeFieldSet(SD3078_ARGS(sd3078_time_field_t field, uint8_t value));//请求修改单一字段；提交时实时读RTC并整组写回
 SD3078_RET SD3078_TimeSetProcess(SD3078_NOARG);    //处理 pending；无请求时立即返回 I2C_OK

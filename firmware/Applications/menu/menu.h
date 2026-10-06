@@ -48,10 +48,12 @@ typedef struct {
     const char *label;      /* 备用文本 */
 } menu_icon_t;
 
-/* 图标页布局常量（menu.c 计算初始滚动位置、menu_ui.c 渲染共用） */
+/* 图标页布局常量（menu.c 计算初始滚动位置、menu_ui.c 渲染共用）
+ * MENU_ICON_SLOT 现在表示图标中心距（pitch），不再表示固定屏幕槽位。
+ * 38px 可在 160px 屏幕上形成 5 个可见图标，最外侧两个仅露出一部分。 */
 #define MENU_SCR_W       160
 #define MENU_SCR_H       40
-#define MENU_ICON_SLOT   40   /* 图标槽位中心距（屏幕 5 个图标可见；选中项只在中间 2 个槽位间移动） */
+#define MENU_ICON_SLOT   38   /* 图标中心距；位置由连续 head_x 决定，不固定到屏幕槽位 */
 #define MENU_ICON_SEL    30   /* 选中图标尺寸 */
 #define MENU_ICON_NORM   20   /* 未选中图标尺寸 */
 

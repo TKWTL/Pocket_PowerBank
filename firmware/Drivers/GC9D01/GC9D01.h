@@ -1,11 +1,16 @@
 /*
   ******************************************************************************
-  * @file 			( фаил ):   GC9D01.h
-  * @brief 		( описание ):  	
+  * @file    	GC9D01.h
+  * @brief   	GC9D01 单色 TFT 液晶驱动（本项目用 0.99" 160 x 40，RGB565）声明
+  * @note    	LVGL 通过 Applications/LVGL/porting/lv_port_disp.c 调用本驱动，
+  *          	只用到 GC9D01_Init / GC9D01_SetWindow / GC9D01_RamWrite。
+  *          	字体（fonts.c/.h）与点阵图（bitmap.h）已删除：本项目全部文字
+  *          	由 LVGL 用内置字库渲染，不经本驱动画字符。
+  * @par 参考来源
+  *          	上游：Golinskiy Konstantin 的 STM32 GC9D01 驱动库
+  *          	作者：Golinskiy Konstantin  邮箱：golinskiy.konstantin\@gmail.com
+  *          	（本文件为上游版本的中文化注释 + 裁剪版）
   ******************************************************************************
-  * @attention 	( внимание ):	 author: Golinskiy Konstantin	e-mail: golinskiy.konstantin@gmail.com
-  ******************************************************************************
-  
  */
  
  
@@ -17,14 +22,10 @@
 #ifdef __cplusplus
 extern C {
 #endif
-// 必须包含 #include "main.h"
-// 这样就不需要单独包含与MCU和标准库相关的文件
-// Обязательно нужен #include "main.h" 
-// чтоб отдельно не подключать файлы связанные с МК и стандартными библиотеками
+// 上游要求必须包含 #include "main.h"，以便一次引入 MCU 与标准库相关头文件；
+// 本项目改由下面两个 BSP 头文件提供 SPI/TMR 依赖。
 #include "bsp_spi.h"
 #include "bsp_tmr.h"
-    
-#include "fonts.h"
 
 #include "stdlib.h"
 #include "stdint.h"
@@ -55,7 +56,6 @@ extern uint16_t GC9D01_Y_Start;
 
 #define PI 	3.14159265
 //--- 预定义颜色 ------------------------------
-//--- готовые цвета ------------------------------
 #define   	GC9D01_BLACK   			0x0000
 #define   	GC9D01_BLUE    			0x001F
 #define   	GC9D01_RED     			0xF800
@@ -96,7 +96,6 @@ extern uint16_t GC9D01_Y_Start;
 
 //==============================================================================
 // 传递给 GC9D01_COLMOD 命令的参数值
-// Значения, передаваемые аргументом с командой GC9D01_COLMOD
 #define ColorMode_RGB_16bit  			0x50
 #define ColorMode_RGB_18bit  			0x60
 #define ColorMode_MCU_12bit  			0x03
@@ -107,14 +106,9 @@ extern uint16_t GC9D01_Y_Start;
 #define GC9D01_DisplayFunctionControl    	0xB6
 
 
-// 驱动程序适用于 160 x 160 的屏幕（最大尺寸）
-
 //### 0.99 英寸 40 x 160 GC9D01 显示屏参数 ###################################
 // 0.99 英寸 40 x 160 GC9D01 显示屏，默认方向
-// длайвер расчитан на экран 160 х 160 (  максимальный размер )
-
-//###  параметры дисплея 0.99" 40 x 160 GC9D01 ###################################
-// 0.99" 40 x 160 GC9D01  display, default orientation
+// 上游驱动按 160 x 160（最大尺寸）设计，其他尺寸靠 XSTART/YSTART 抵消像素差
 #ifdef GC9D01_IS_40X160
 	
 	#define GC9D01_WIDTH  			160
@@ -154,13 +148,7 @@ void GC9D01_DrawEllipse(int16_t x0, int16_t y0, int16_t radiusX, int16_t radiusY
 void GC9D01_DrawEllipseFilled(int16_t x0, int16_t y0, int16_t radiusX, int16_t radiusY, uint16_t color);
 void GC9D01_DrawEllipseFilledWithAngle(int16_t x0, int16_t y0, int16_t radiusX, int16_t radiusY, float angle_degrees, uint16_t color);
 void GC9D01_DrawEllipseWithAngle(int16_t x0, int16_t y0, int16_t radiusX, int16_t radiusY, float angle_degrees, uint16_t color);
-void GC9D01_DrawChar(uint16_t x, uint16_t y, uint16_t TextColor, uint16_t BgColor, uint8_t TransparentBg, FontDef_t* Font, uint8_t multiplier, unsigned char ch);
-void GC9D01_DrawCharWithAngle(uint16_t x, uint16_t y, uint16_t TextColor, uint16_t BgColor, uint8_t TransparentBg, FontDef_t* Font, uint8_t multiplier, float angle_degrees, unsigned char ch);
-void GC9D01_print(uint16_t x, uint16_t y, uint16_t TextColor, uint16_t BgColor, uint8_t TransparentBg, FontDef_t* Font, uint8_t multiplier, char *str);
-void GC9D01_printWithAngle(uint16_t x, uint16_t y, uint16_t TextColor, uint16_t BgColor, uint8_t TransparentBg, FontDef_t* Font, uint8_t multiplier, float angle_degrees, char *str);
 void GC9D01_rotation( uint8_t rotation );
-void GC9D01_DrawBitmap(int16_t x, int16_t y, const unsigned char* bitmap, int16_t w, int16_t h, uint16_t color);
-void GC9D01_DrawBitmapWithAngle(int16_t x, int16_t y, const unsigned char* bitmap, int16_t w, int16_t h, uint16_t color, float angle_degrees);
 void GC9D01_DrawCircleHelper(int16_t x0, int16_t y0, int16_t radius, int8_t quadrantMask, uint16_t color);
 void GC9D01_DrawFillCircleHelper(int16_t x0, int16_t y0, int16_t r, uint8_t corners, int16_t delta, uint16_t color);
 void GC9D01_DrawFillRoundRect(int16_t x, int16_t y, uint16_t width, uint16_t height, int16_t cornerRadius, uint16_t color);

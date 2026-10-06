@@ -28,8 +28,12 @@ static void request_redraw(void)
 
 void menu_init(void)
 {
+    /* 根图标页冷启动默认选中 Settings（index 1）。
+     * 后续仍由 last_index 记忆用户最后停留的图标。 */
+    menu_page_root.last_index = (menu_page_root.item_count > 1U) ? 1U : 0U;
+
     s_menu.page    = &menu_page_root;
-    s_menu.index   = 0;
+    s_menu.index   = menu_page_root.last_index;
     s_menu.editing = false;
     s_menu.depth   = 0;
     s_menu.active  = false;
@@ -63,12 +67,12 @@ static uint8_t menu_entry_index(const menu_page_t *pg)
     return idx;
 }
 
-/* 图标页：进入菜单时选中项图标中心定位到居中区域左位置
- * （槽位左边界 = 80 - 40 = 40，图标中心 = 60；NEXT 后在右位置图标中心 100 间移动），
- * 对称于屏幕中心，两侧给顶部名称/时间留出空间。 */
+/* 图标页：head_x 定义为 index 0 图标的“中心坐标”。
+ * 打开菜单时把当前选中图标放在屏幕正中（x=80）；之后 UI 只在选中图标
+ * 越过可视限制时做最小量滚动，因此高亮图标不再总与屏幕中心对齐。 */
 static int16_t icon_head_center(uint8_t idx)
 {
-    return (int16_t)(MENU_SCR_W / 2) - (int16_t)MENU_ICON_SLOT
+    return (int16_t)(MENU_SCR_W / 2)
            - (int16_t)idx * MENU_ICON_SLOT;
 }
 

@@ -23,8 +23,8 @@ https://www.iconfont.cn与https://igoutu.cn      寻找特定主题的图像
 https://www.sojson.com/image/change.html        修改图片尺寸
 https://convertio.co                            将图片转为XBM格式
 https://www.lddgo.net/string/xbm-editor         对XBM数据进行编辑与预览
+本项目只把这些 XBM 数组当作位图数据重新生成为 LVGL 图符，不编译本文件。
  */
-#include "images/image.h"
 
 const unsigned char img_dashboard [] = {
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,

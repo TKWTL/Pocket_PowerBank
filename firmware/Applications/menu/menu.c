@@ -5,6 +5,9 @@
  *  - LV_KEY_NEXT  ：下一项 / 编辑时增加值
  *  - LV_KEY_PREV  ：上一项 / 编辑时减少值
  *  - LV_KEY_ENTER ：进入子页 / 触发动作 / 翻转开关 / 进入&退出数值编辑
+ *
+ * 参考来源：菜单思想参考 MiaoUI（https://github.com/JFeng-Z/MiaoUI），
+ * 具体借用点（循环滚动 / lastJumpItem 记忆 / 应用模型）见 menu.h 文件头"参考来源"。
  */
 #include "menu.h"
 #include "menu_pages.h"

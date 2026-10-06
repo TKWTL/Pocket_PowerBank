@@ -1,5 +1,7 @@
 /* menu_icons.c - 根页图标(LVGL v9 A8 位图, 由 tools/xbm2lvgl.py 自动生成) */
-/* 源素材: Applications/ui/images/image.c (MiaoUI XBM 30x30) */
+/* 源素材: MiaoUI 的 XBM 图标集(30x30) https://github.com/JFeng-Z/MiaoUI */
+/* 生成命令: python tools/xbm2lvgl.py（XBM 数据见 tools/xbm_icons.c） */
+/* 注意: 与 tools/xbm2lvgl.py 当前输出的 _small 未选中图不同，改脚本后请逐图核对再重新生成 */
 /* A8: 1=不透明(前景), 0=透明背景; 渲染时用 lv_image_set_recolor 换主题色 */
 #include "lvgl.h"
 #include "menu_icons.h"

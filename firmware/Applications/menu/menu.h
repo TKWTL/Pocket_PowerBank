@@ -6,6 +6,19 @@
  *  - 一屏显示一个条目（160x40 长条屏），NEXT/PREV 翻页，ENTER 确认
  *  - 支持返回栈实现多级菜单
  *  - 菜单只负责状态与逻辑，渲染由 menu_ui 完成（通过重绘回调通知）
+ *
+ * 参考来源：
+ *  - 思想参考 MiaoUI（单色 OLED 菜单 UI 框架，C 语言、双向链表、非线性动画）
+ *    https://github.com/JFeng-Z/MiaoUI
+ *    本项目借用其下列思想，但改用 LVGL 9 渲染、条目仍存数组（非链表）：
+ *      1) 双向链表循环滚动        → menu.c 索引按方向取模（环形），见 menu_next/prev
+ *      2) UI_Animation 的 PID 动画 → menu_ui.c 的 PID 滑动切换（位置类动画 ki 必须为 0）
+ *      3) lastJumpItem 记忆       → menu_page_t.last_index（返回上级恢复原选中项）
+ *      4) UI_PAGE_ICON 图标页     → MENU_PAGE_ICON + menu_icon_t（选中 30x30 / 未选中 20x20）
+ *      5) UI_ACTION 动作枚举      → app_action_t（按键在 ui_task 统一映射为语义动作）
+ *      6) 菜单项即应用            → menu_app_t 生命周期（进入 create / 退出 destroy）
+ *  - 图标来源：根页图标由 MiaoUI 的 XBM 图标集（30x30）转换而来，
+ *    转换脚本 menu/tools/xbm2lvgl.py，生成物 menu_icons.c。
  */
 #ifndef MENU_H
 #define MENU_H

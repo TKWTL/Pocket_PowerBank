@@ -4,9 +4,11 @@
 xbm2lvgl.py - 把 MiaoUI 的 XBM 图标(30x30)转换为 LVGL v9 A8 图像描述符。
 
 用法:
-    python xbm2lvgl.py
+    python xbm2lvgl.py [XBM 源文件]
+    不带参数时用同目录的 xbm_icons.c（从 MiaoUI 的 image.c 抽出，仅保留 XBM 数组）。
 
-输入:  firmware/Applications/ui/images/image.c 中的 XBM 数组
+输入:  XBM 数组文件，默认 tools/xbm_icons.c
+       原始来源: MiaoUI 的 30x30 XBM 图标集 https://github.com/JFeng-Z/MiaoUI
 输出:  firmware/Applications/menu/menu_icons.c / menu_icons.h
 
 格式说明:
@@ -22,10 +24,13 @@ xbm2lvgl.py - 把 MiaoUI 的 XBM 图标(30x30)转换为 LVGL v9 A8 图像描述�
 """
 import os
 import re
+import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SRC = os.path.join(ROOT, "ui", "images", "image.c")
-OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+# XBM 源：默认同目录的 xbm_icons.c，可用第一个命令行参数覆盖
+SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(TOOLS_DIR, "xbm_icons.c")
+# 生成物放到 menu/ 下（与 menu_icons 的使用方同目录）
+OUT_DIR = os.path.dirname(TOOLS_DIR)
 OUT_C = os.path.join(OUT_DIR, "menu_icons.c")
 OUT_H = os.path.join(OUT_DIR, "menu_icons.h")
 
@@ -112,7 +117,8 @@ def main():
     h_lines.append("")
 
     c_lines.append("/* menu_icons.c - 根页图标(LVGL v9 A8 位图, 由 tools/xbm2lvgl.py 自动生成) */")
-    c_lines.append('/* 源素材: Applications/ui/images/image.c (MiaoUI XBM 30x30) */')
+    c_lines.append('/* 源素材: MiaoUI 的 XBM 图标集(30x30) https://github.com/JFeng-Z/MiaoUI */')
+    c_lines.append('/* 生成命令: python tools/xbm2lvgl.py（输入为 MiaoUI 仓库的 30x30 XBM 图标数组） */')
     c_lines.append('/* A8: 1=不透明(前景), 0=透明背景; 渲染时用 lv_image_set_recolor 换主题色 */')
     c_lines.append('#include "lvgl.h"')
     c_lines.append('#include "menu_icons.h"')

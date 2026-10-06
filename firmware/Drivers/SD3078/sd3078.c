@@ -662,18 +662,23 @@ SD3078_RET SD3078_Init(SD3078_NOARG)
     if (st != I2C_OK) return st;
 
     st = SD3078_ChargeSet(SD3078_CHARGE_ENABLE, SD3078_CHARGE_RES_SEL);
+
+    /* ByteModify 是底层原语，本身不拿 mutex；初始化里的连续 RMW 显式保护。 */
     if (st == I2C_OK) {
-        st = SD3078_ByteModify(SD3078_CTRG_CTR3, SD3078_CTR3_F32K, SD3078_CTR3_F32K);
-    }
-    if (st == I2C_OK) {
-        st = SD3078_ByteModify(SD3078_CTRG_CTR2,
-                               SD3078_CTR2_INTFE | SD3078_CTR2_INTAE |
-                               SD3078_CTR2_INTDE | SD3078_CTR2_FOBAT, 0x00U);
-    }
-    if (st == I2C_OK) {
-        st = SD3078_ByteModify(SD3078_CTRG_CTR4,
-                               SD3078_CTR4_INTS_E2 | SD3078_CTR4_INTS_E1 |
-                               SD3078_CTR4_INTS_E0, 0x00U);
+        SD3078_MUTEX_TAKE;
+        st = SD3078_ByteModify(SD3078_CTRG_CTR3,
+                               SD3078_CTR3_F32K, SD3078_CTR3_F32K);
+        if (st == I2C_OK) {
+            st = SD3078_ByteModify(SD3078_CTRG_CTR2,
+                                   SD3078_CTR2_INTFE | SD3078_CTR2_INTAE |
+                                   SD3078_CTR2_INTDE | SD3078_CTR2_FOBAT, 0x00U);
+        }
+        if (st == I2C_OK) {
+            st = SD3078_ByteModify(SD3078_CTRG_CTR4,
+                                   SD3078_CTR4_INTS_E2 | SD3078_CTR4_INTS_E1 |
+                                   SD3078_CTR4_INTS_E0, 0x00U);
+        }
+        SD3078_MUTEX_GIVE;
     }
 
     lock_st = SD3078_Lock();

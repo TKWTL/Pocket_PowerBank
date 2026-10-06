@@ -696,9 +696,8 @@ static void icon_apply_positions(const menu_state_t *st, uint8_t n)
     }
 }
 
-/* 顶部时间指示：1s 周期刷新（仅图标页激活时；SD3078 未初始化显示 --:--）
- * 说明：SD3078 尚未在工程中初始化，IsInitialized()=0 时始终显示占位，
- * 不会触发 I2C 访问（I2C_RegRead 无超时保护，未初始化硬件勿调用）。 */
+/* 顶部时间指示：1s 周期刷新。SD3078 不再维护初始化 flag；
+ * UI 只读取 load_task 已更新的镜像，镜像不合法时显示 --:--。 */
 static void icon_clock_tick(lv_timer_t *t)
 {
     char buf[8];
@@ -706,11 +705,13 @@ static void icon_clock_tick(lv_timer_t *t)
     if (!s_icon_page) {
         return;
     }
-    if (!SD3078_IsInitialized()) {
+    /* 驱动不再提供 initialized flag：用时间镜像本身的合法范围判断是否已有有效数据。 */
+    if (SD3078_ReadMonth() < 1U || SD3078_ReadMonth() > 12U ||
+        SD3078_ReadHour() > 23U || SD3078_ReadMin() > 59U) {
         lv_label_set_text(s_icon_clock, "--:--");
         return;
     }
-    /* 时间镜像由 load_task 0.5s 周期更新（TimeLoad），UI 只读，勿在此 load */
+    /* 时间镜像由 load_task 周期更新，UI 只读，不访问 I2C */
     snprintf(buf, sizeof(buf), "%02d:%02d", SD3078_ReadHour(), SD3078_ReadMin());
     lv_label_set_text(s_icon_clock, buf);
 }

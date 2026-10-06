@@ -12,74 +12,34 @@ extern C {
 #include "stdint.h"
     
 /******************************用户设置区开始**********************************/
-// 定义 SD3078_USE_PROTOTHREAD 以启用协作式挂起（protothread + coroOS）。
-//  - 未定义：阻塞式 API（返回类型为 void）。
-//  - 已定义：协作式 API（返回类型为 char，并额外带 struct pt *pt 参数）。
-//#define SD3078_USE_PROTOTHREAD
-
-/* I²C 通信失败 → 清 initialized（不再维护 online 字段）：
- *  - initialized=0 使 SD3078_IsInitialized() 返回 0，load_task 下一轮就会重新
- *    SD3078_Init()（CTR1 校验通过后重新置 1），即"通信失败 → 自动重初始化"。 */
-#ifndef SD3078_MARK_OFFLINE_ON_I2C_FAIL
-#define SD3078_MARK_OFFLINE_ON_I2C_FAIL()   do { SD3078_Status.initialized = 0; } while(0)
-#endif
-
-/*包含自己的I2C驱动库*/
 #include "bsp_i2c.h"
-        
-//外部库给出的I2C读写函数
-#ifdef SD3078_USE_PROTOTHREAD   //允许挂起    
-    #define SD3078_I2C_Transmit(addr,reg,pdata,len,pflag)   ASYNC_I2C_Transmit(addr,reg,pdata,len,0,pflag)
-    #define SD3078_I2C_Receive(addr,reg,pdata,len,pflag)    ASYNC_I2C_Receive(addr,reg,pdata,len,0,pflag)    
-#else                           //不允许挂起
-    #define SD3078_I2C_Transmit(addr,reg,pdata,len,pflag)   I2C_RegWrite(addr, reg, pdata, len)
-    #define SD3078_I2C_Receive(addr,reg,pdata,len,pflag)    I2C_RegRead(addr, reg, pdata, len)
-#endif
 
-//充电功能设置（SD3078 内置 VBAT 充电电路）
-//默认不充电：上电初始化写「禁止充电」；需要充电时由上层/菜单手动或自动调用 SD3078_ChargeSet() 使能
-//  - 5kΩ限流+使能 = 0x81H；2kΩ限流+使能 = 0x82H（手册推荐值）
-#define SD3078_CHARGE_ENABLE        0           //1=使能充电，0=禁止充电（默认不充电，由上层手动/自动控制）
-#define SD3078_CHARGE_RES_SEL       1           //充电限流电阻选择：0=10kΩ，1=5kΩ，2=2kΩ，3=断开（使能充电时生效）
+/* 充电功能设置（SD3078 内置 VBAT 充电电路）
+ * 默认不充电；需要时由上层显式调用 SD3078_ChargeSet()。 */
+#define SD3078_CHARGE_ENABLE        0
+#define SD3078_CHARGE_RES_SEL       1       /* 0=10kΩ, 1=5kΩ, 2=2kΩ, 3=断开 */
 
-//温度报警阈值（单位：°C，带符号，仅使能温度报警时有效）
-#define SD3078_TEMP_ALARM_LOW       (-10)       //低温报警值（小于等于此值报警）
-#define SD3078_TEMP_ALARM_HIGH      60          //高温报警值（大于等于此值报警）
-
-//时间制式（1=24小时制，0=12小时制）
-#define SD3078_24HOUR               1
+/* 温度报警阈值（°C） */
+#define SD3078_TEMP_ALARM_LOW       (-10)
+#define SD3078_TEMP_ALARM_HIGH      60
 
 /******************************用户设置区结束**********************************/
-//操作语法宏，方便添加freeRTOS之类的支持
-#ifdef SD3078_USE_PROTOTHREAD
-    #define SD3078_RET          char
-    #define SD3078_NOARG        struct pt *pt
-    #define SD3078_ARGS(...)    struct pt *pt, __VA_ARGS__
-    #define SD3078_EXEC(cond)   if(cond == 0) THRD_YIELD                        //反复执行某函数直到返回1
-    #define SD3078_UNTIL(cond)  THRD_UNTIL(cond)                                //条件不满足时出让CPU
-    #define SD3078_SPAWN_NOARG(func)\
-                                THRD_SPAWN_NOARG(func)
-    #define SD3078_SPAWN_ARGS(func,...)\
-                                THRD_SPAWN_ARGS(func, __VA_ARGS__)              //调用子线程/函数语句
-    #define SD3078_FUNC_BEGIN   THRD_BEGIN
-    #define SD3078_FUNC_END     THRD_END
-    #define SD3078_MUTEX_TAKE   PT_SEM_WAIT(pt, &i2c_mutex)
-    #define SD3078_MUTEX_GIVE   PT_SEM_SIGNAL(pt, &i2c_mutex)   
-#else
-    #define SD3078_RET          void
-    #define SD3078_NOARG        void
-    #define SD3078_ARGS(...)    __VA_ARGS__
-    #define SD3078_EXEC(cond)   cond
-    #define SD3078_UNTIL(cond)  {}
-    #define SD3078_SPAWN_NOARG(func)\
-                                func()
-    #define SD3078_SPAWN_ARGS(func,...)\
-                                func(__VA_ARGS__)
-    #define SD3078_FUNC_BEGIN   {}
-    #define SD3078_FUNC_END     {}
-    #define SD3078_MUTEX_TAKE   xSemaphoreTake(mutex_i2c_handle, portMAX_DELAY)
-    #define SD3078_MUTEX_GIVE   xSemaphoreGive(mutex_i2c_handle)
-#endif    
+
+/* SD3078 驱动统一使用 bsp_i2c 的 i2c_status_type 返回错误。
+ * 当前工程只使用 FreeRTOS 阻塞式 BSP；旧 protothread 返回模型已取消。 */
+#define SD3078_RET          i2c_status_type
+#define SD3078_NOARG        void
+#define SD3078_ARGS(...)    __VA_ARGS__
+
+/* 函数内部状态传播：不在持有 mutex 时提前 return，避免错误路径漏解锁。 */
+#define SD3078_FUNC_BEGIN   i2c_status_type __sd_status = I2C_OK
+#define SD3078_EXEC(expr)   do { if (__sd_status == I2C_OK) { __sd_status = (expr); } } while (0)
+#define SD3078_SPAWN_NOARG(func)                             SD3078_EXEC(func())
+#define SD3078_SPAWN_ARGS(func,...)                             SD3078_EXEC(func(__VA_ARGS__))
+#define SD3078_UNTIL(cond)  do { (void)(cond); } while (0)
+#define SD3078_FUNC_END     return __sd_status
+#define SD3078_MUTEX_TAKE   xSemaphoreTake(mutex_i2c_handle, portMAX_DELAY)
+#define SD3078_MUTEX_GIVE   xSemaphoreGive(mutex_i2c_handle)
 
 /* ==================== 统一时间结构体 ====================
  * 参考 NUEDC framework 的 time.c/.h（统一时间结构体，避免各驱动各写一套 set/get）：
@@ -105,6 +65,17 @@ typedef struct {
     uint8_t year;
 } sd3078_time_t;
 
+/* UI/上层按字段请求修改时间。驱动在真正提交前重新读取 RTC 当前值，
+ * 只覆盖被修改字段，然后仍一次性写满 0x00~0x06 七字节。 */
+typedef enum {
+    SD3078_TIME_FIELD_SEC = 0,
+    SD3078_TIME_FIELD_MIN,
+    SD3078_TIME_FIELD_HOUR,
+    SD3078_TIME_FIELD_DAY,
+    SD3078_TIME_FIELD_MONTH,
+    SD3078_TIME_FIELD_YEAR
+} sd3078_time_field_t;
+
 /* 按寄存器顺序取字段（0=秒 … 6=年）：b[] 视图。
  * 统一转成 uint8_t* 再按固定下标取，故调用点传值（SD3078_Status.time_dec）
  * 和传指针（函数内的 sd3078_time_t *t、&t）都是同一写法。 */
@@ -119,7 +90,6 @@ typedef struct {
 
 struct SD3078_StatusTypedef
 {
-    uint8_t initialized;                                                        //SD3078已初始化（CTR1 校验通过）；通信失败时清 0 触发重新初始化
     uint8_t unlocked;                                                           //SD3078已解锁（WRTC1/2/3=1），此时寄存器可写
     uint8_t flag;                                                               //标识传输完成与传输状态用变量
     uint8_t sendbuf[8];                                                         //传输缓冲用变量
@@ -129,8 +99,8 @@ struct SD3078_StatusTypedef
     sd3078_time_t time;             //0x00~0x06 实时时钟（BCD 原始值）
     sd3078_time_t time_dec;         //0x00~0x06 实时时钟（十进制镜像，供 SD3078_Read*() 返回）
 
-    //时间报警镜像（0x07~0x0D 用统一时间结构体，0x0E 报警允许单独放）
-    sd3078_time_t alarm_time;       //0x07~0x0D 报警时间（BCD 原始值）
+    //时间报警镜像（0x07~0x0D；week 字段是星期 bitmask，不是 0~6）
+    sd3078_time_t alarm_time;       //报警时间 BCD 原始值；hour 无 12/24 标志位
     uint8_t alarm_en;               //0x0E 报警允许
 
     //控制寄存器存档
@@ -148,14 +118,10 @@ struct SD3078_StatusTypedef
     //芯片ID（只读）
     uint8_t id[8];                  //0x72~0x79 芯片唯一身份识别码
 
-    //时间设置请求（UI 经 SD3078_RequestTimeSet 写入，load_task 经 SD3078_TimeSetProcess 提交）
-    uint8_t time_set_pending;        //1=有待提交的时间设置
-    uint8_t set_sec;                 //目标秒（十进制）
-    uint8_t set_min;                 //目标分（十进制）
-    uint8_t set_hour;                //目标时（十进制）
-    uint8_t set_day;                 //目标日（十进制）
-    uint8_t set_month;               //目标月（十进制）
-    uint8_t set_year;                //目标年（十进制，0~99）
+    /* 时间设置请求：bit0..5 分别对应 sec/min/hour/day/month/year。
+     * load_task 提交时先实时读取当前 RTC，再覆盖 pending 字段。 */
+    sd3078_time_t set_time;
+    uint8_t time_set_mask;
 };
 
 //SD3078 I2C 地址，器件代码为7位"0110010"(0x32)，此处为左移一位后的8位写地址
@@ -205,7 +171,7 @@ struct SD3078_StatusTypedef
 #define SD3078_STRG_TEMP_HIS_L          0x1EU//历史最低温度（bit7为符号位）
 #define SD3078_STRG_TEMP_HIS_H          0x1FU//历史最高温度（bit7为符号位）
 
-//历史温度发生时间（20H~25H为历史最低温，26H~2BH为历史最高温，均为分钟/时/星期/日/月/年）
+//历史温度发生时间（20H~25H最低温、26H~2BH最高温；均为6字节：分/时/星期/日/月/年，无秒字段）
 #define SD3078_STRG_TL_MIN              0x20U//历史最低温-分钟
 #define SD3078_STRG_TL_HOUR             0x21U//历史最低温-小时
 #define SD3078_STRG_TL_WEEK             0x22U//历史最低温-星期
@@ -358,8 +324,9 @@ uint8_t SD3078_ReadYearBCD(void);              //读取年（原始BCD镜像）
 uint8_t SD3078_BcdToDec(uint8_t bcd);          //BCD → 十进制（时间/日期寄存器为 BCD 码）
 uint8_t SD3078_DecToBcd(uint8_t dec);          //十进制 → BCD（时间/日期寄存器为 BCD 码）
 SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(const sd3078_time_t *t));//一次性写7字节时间（t 传十进制值，内部转 BCD 并处理 12_/24 位）
-SD3078_RET SD3078_RequestTimeSet(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min, uint8_t sec));//请求设置时间（十进制输入，写句柄待 load_task 提交）
-SD3078_RET SD3078_TimeSetProcess(SD3078_NOARG);    //检测并提交时间设置请求（load_task 0.5s 周期调用）
+SD3078_RET SD3078_RequestTimeSet(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min, uint8_t sec));//请求整组时间（十进制；提交时仍先实时读RTC）
+SD3078_RET SD3078_RequestTimeFieldSet(SD3078_ARGS(sd3078_time_field_t field, uint8_t value));//请求修改单一字段；提交时实时读RTC并整组写回
+SD3078_RET SD3078_TimeSetProcess(SD3078_NOARG);    //处理 pending；无请求时立即返回 I2C_OK
 
 //时间报警操作
 SD3078_RET SD3078_AlarmLoad(SD3078_NOARG);     //读取报警镜像（0x07~0x0D 时间 + 0x0E 报警允许）
@@ -394,15 +361,14 @@ SD3078_RET SD3078_FreqOutSet(SD3078_ARGS(uint8_t fs));//设置INT脚频率中断
 SD3078_RET SD3078_F32KSet(SD3078_ARGS(uint8_t enable));//32K输出控制（1=允许输出）
 
 //用户RAM与ID操作
-SD3078_RET SD3078_SramWrite(SD3078_ARGS(uint8_t offset, uint8_t *pdata, uint16_t len));//写用户RAM（offset 0~69）
+SD3078_RET SD3078_SramWrite(SD3078_ARGS(uint8_t offset, const uint8_t *pdata, uint16_t len));//写用户RAM（offset 0~69；内部原子解锁/写入/上锁）
 SD3078_RET SD3078_SramRead(SD3078_ARGS(uint8_t offset, uint8_t *pdata, uint16_t len));//读用户RAM
 SD3078_RET SD3078_IDLoad(SD3078_NOARG);        //读取芯片ID（72H~79H共8字节）
 uint8_t SD3078_ReadID(uint8_t idx);            //读取芯片UID单字节（idx 0~7，取初始化时读到的镜像，不发 I2C）
 
 //初始化
-SD3078_RET SD3078_Init(SD3078_NOARG);          //正式初始化（上电即调用一次：在线校验+ID/PMF/RTCF/OSF快照+默认不充电+低功耗），自带initialized判断
-SD3078_RET SD3078_FullInit(SD3078_NOARG);      //完整初始化（在SD3078_Init基础上追加温度报警阈值等完整配置）
-uint8_t SD3078_IsInitialized(void);            //检测SD3078是否已初始化过
+SD3078_RET SD3078_Init(SD3078_NOARG);          //正式初始化；成功返回 I2C_OK，失败返回具体 I2C 错误
+SD3078_RET SD3078_FullInit(SD3078_NOARG);      //完整初始化（在基础配置上追加温度报警阈值）
 
 #ifdef __cplusplus
 }

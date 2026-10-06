@@ -572,11 +572,12 @@ static void slide_finish(void)
 #define ICON_Y_SEL         8        /* 30 高图标 y（下对齐基础上抬 2：40-30-2=8） */
 #define ICON_Y_NORM        16       /* 20 高图标 y（下对齐基础上抬 4：40-20-4=16） */
 #define ICON_TOP_Y         0        /* 顶部文字条 y（12px 字体顶格） */
-/* 中间 2 个槽位左边界：40 与 80（图标中心 60 / 100），对称于屏幕中心 80。
- * 选中可动区域居中 → 右侧图标(到115)与右上角时间(从~123)留间隙、
- * 左侧与名称对称。超出则滚动图标表让选中项回到中间。 */
-#define ICON_LEFT_LIMIT    (MENU_SCR_W / 2 - MENU_ICON_SLOT)   /* 40 */
-#define ICON_RIGHT_LIMIT   (MENU_SCR_W / 2)                    /* 80 */
+/* 高亮图标中心允许活动的水平范围。
+ * 图标不再绑定固定屏幕槽位：打开时选中项中心位于 x=80；
+ * 随 NEXT/PREV 自由移动，只在中心越过 [40,120] 时让整条图标带做“最小必要位移”，
+ * 因此多数按键只移动高亮，不滚动整条图标带。 */
+#define ICON_LEFT_LIMIT     40
+#define ICON_RIGHT_LIMIT   120
 
 /* 图标对象（每个图标一个：透明度 PID 动画；尺寸用双位图 src 切换，不走 scale transform） */
 typedef struct {
@@ -648,14 +649,16 @@ static void apply_theme(void)
     }
 }
 
-/* 循环折叠：把线性槽位位置折叠到屏幕附近（[-40, 200]），使表末端项
- * （About 等）出现在选中项另一侧。取模实现：先移到屏幕中心坐标系，
- * %period 落单周期内再偏移回（不能用 while 加减 period：
- * period>屏宽时 -55↔185 会死循环）。 */
-static int16_t icon_fold_slot(int32_t raw_x, uint8_t n)
+/* 循环折叠：raw_x 是图标“中心坐标”，把线性图标带折叠到屏幕中心附近的
+ * 最近一个周期。这样末端 About 与首端 Return 可以自然首尾相接，不需要固定槽位。 */
+static int16_t icon_fold_center(int32_t raw_x, uint8_t n)
 {
     int32_t period = (int32_t)n * MENU_ICON_SLOT;
     int32_t half = MENU_SCR_W / 2;
+
+    if (period <= 0) {
+        return (int16_t)raw_x;
+    }
 
     raw_x -= half;
     raw_x %= period;
@@ -665,27 +668,27 @@ static int16_t icon_fold_slot(int32_t raw_x, uint8_t n)
     return (int16_t)raw_x;
 }
 
-/* 应用所有图标当前位置/透明度/显隐（无 scale：双尺寸位图直接换 src） */
+/* 应用所有图标当前位置/透明度/显隐。
+ * s_head_x_cur 表示 index 0 图标的中心坐标；MENU_ICON_SLOT 仅表示相邻图标中心距。
+ * 38px pitch + 160px 屏宽时，正常可见 5 个图标，左右最外侧各只露出一部分。 */
 static void icon_apply_positions(const menu_state_t *st, uint8_t n)
 {
     uint8_t i;
     for (i = 0; i < n; i++) {
         menu_icon_obj_t *ic = &s_icons[i];
         bool sel = (i == st->index);
-        /* 槽位原始位置（线性），再循环折叠到屏幕附近 */
-        int16_t slot_x = icon_fold_slot(s_head_x_cur + (int32_t)i * MENU_ICON_SLOT, n);
-        /* 图标在槽位内水平居中：选中 30 每侧留 5，未选中 20 每侧留 10 */
-        int16_t off = sel ? (MENU_ICON_SLOT - MENU_ICON_SEL) / 2
-                          : (MENU_ICON_SLOT - MENU_ICON_NORM) / 2;
+        int16_t center_x = icon_fold_center(s_head_x_cur + (int32_t)i * MENU_ICON_SLOT, n);
+        int16_t size = sel ? MENU_ICON_SEL : MENU_ICON_NORM;
         int16_t y = sel ? ICON_Y_SEL : ICON_Y_NORM;
-        bool visible = (slot_x + MENU_ICON_SEL > 0) && (slot_x < MENU_SCR_W);
+        int16_t x = center_x - size / 2;
+        bool visible = (x + size > 0) && (x < MENU_SCR_W);
 
-        lv_obj_set_pos(ic->img, slot_x + off, y);
+        lv_obj_set_pos(ic->img, x, y);
         lv_obj_set_style_opa(ic->img, (lv_opa_t)ic->pid_opa.current, 0);
         if (visible) {
             lv_obj_remove_flag(ic->img, LV_OBJ_FLAG_HIDDEN);
         } else {
-            lv_obj_add_flag(ic->img, LV_OBJ_FLAG_HIDDEN);   /* 空间不足：隐藏 */
+            lv_obj_add_flag(ic->img, LV_OBJ_FLAG_HIDDEN);
         }
     }
 }
@@ -735,22 +738,22 @@ static void icon_redraw(const menu_state_t *st, const menu_page_t *pg)
         }
     }
 
-    /* 滚动目标更新：选中项（循环折叠后的实际显示位置）只在中间 2 个槽位
-       [65, 105] 间移动，屏幕保持 5 个图标可见。
-       NEXT：选中项超过 105（中间偏右）→ 图标表左滚一格，回到 105；
-       PREV：选中项低于 65（中间偏左）→ 图标表右滚一格，回到 65。
-       方向用状态机 nav_dir（循环时 id 差会判错方向）。
-       仅在图标页内部导航时触发（进入图标页的首帧不滚动）。 */
+    /* 最小位移滚动：
+     * 选中图标的中心允许自由处于 [40,120]。按键后若仍在范围内，图标带完全不滚；
+     * 若越界，只补偿“超出的那几像素”，把高亮中心刚好钳到边界，而不是整格滚动。
+     * 因此屏幕中心 x=80 只用于初始位置，随后不会强迫高亮重新居中。 */
     if (s_icon_page_was && s_last_index != st->index) {
-        int8_t dir = st->nav_dir;   /* +1 NEXT / -1 PREV */
-        sel_x = icon_fold_slot(s_head_x_target + (int32_t)st->index * MENU_ICON_SLOT, n);
-        if ((dir > 0 && sel_x > ICON_RIGHT_LIMIT) ||
-            (dir < 0 && sel_x < ICON_LEFT_LIMIT)) {
-            if (dir > 0)
-                s_head_x_target -= MENU_ICON_SLOT;   /* NEXT：图标表向左滚一格 */
-            else
-                s_head_x_target += MENU_ICON_SLOT;   /* PREV：图标表向右滚一格 */
-            /* 记录滚动位置（push 时随页面保存，退出菜单时 menu_open 会重置） */
+        int16_t delta = 0;
+        sel_x = icon_fold_center(s_head_x_target + (int32_t)st->index * MENU_ICON_SLOT, n);
+
+        if (sel_x > ICON_RIGHT_LIMIT) {
+            delta = (int16_t)(ICON_RIGHT_LIMIT - sel_x);
+        } else if (sel_x < ICON_LEFT_LIMIT) {
+            delta = (int16_t)(ICON_LEFT_LIMIT - sel_x);
+        }
+
+        if (delta != 0) {
+            s_head_x_target += delta;
             menu_page_set_head_x(s_head_x_target);
             pid_init(&s_head_pid, (float)s_head_x_cur, (float)s_head_x_target);
         }

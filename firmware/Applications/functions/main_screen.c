@@ -180,13 +180,14 @@ static void icon_update(void)
 
     /* 超低电量（≤5%）时容量百分比闪烁：算法与读秒冒号相同但奇偶性相反
      * （秒奇数→冒号隐藏、百分比显示；秒偶数→冒号显示、百分比隐藏，交错闪烁）。
-     * RTC 未初始化时无走秒基准 → 保持常显不闪。 */
+     * RTC 镜像无效时无走秒基准 → 保持常显不闪。 */
     {
         uint8_t pct = SW6306_ReadCapacity();
         snprintf(buf, sizeof(buf), "%d%%", pct);
         lv_label_set_text_static(s_bat_pct, buf);
         if (pct <= 5U && SW6306_IsDischarging()) {
-            if (SD3078_IsInitialized() && !(SD3078_ReadSec() & 1U)) {
+            uint8_t rtc_valid = (SD3078_ReadMonth() >= 1U && SD3078_ReadMonth() <= 12U);
+            if (rtc_valid && !(SD3078_ReadSec() & 1U)) {
                 lv_obj_add_flag(s_bat_pct, LV_OBJ_FLAG_HIDDEN);
             } else {
                 lv_obj_remove_flag(s_bat_pct, LV_OBJ_FLAG_HIDDEN);
@@ -204,7 +205,8 @@ static void icon_update(void)
     /* 时间 HH:MM：load_task 更新的 SD3078 镜像（UI 只读），独立缓冲；
      * 走秒提示：秒为奇数时冒号显示为空格（闪烁），等宽保持宽度不变 */
     static char hbuf[8];
-    if (SD3078_IsInitialized()) {
+    if (SD3078_ReadMonth() >= 1U && SD3078_ReadMonth() <= 12U &&
+        SD3078_ReadHour() <= 23U && SD3078_ReadMin() <= 59U) {
         if (SD3078_ReadSec() & 1U) {
             snprintf(hbuf, sizeof(hbuf), "%02d %02d", SD3078_ReadHour(), SD3078_ReadMin());
         } else {

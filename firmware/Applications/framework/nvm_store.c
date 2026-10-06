@@ -16,6 +16,11 @@
 #define NVM_OFF_DISCHARGE_ENERGY_WH   4U
 #define NVM_OFF_SHUNT_MOHM            8U
 
+/* 存储格式明确绑定 32-bit IEEE754 float / 16-bit int16_t。
+ * 用 typedef 断言兼容当前 ARMCLANG C 方言，不依赖 _Static_assert 开关。 */
+typedef char nvm_float_must_be_4_bytes[(sizeof(float) == 4U) ? 1 : -1];
+typedef char nvm_i16_must_be_2_bytes[(sizeof(int16_t) == 2U) ? 1 : -1];
+
 nvm_values_t nvm_data;
 
 static uint8_t s_nvm_valid;

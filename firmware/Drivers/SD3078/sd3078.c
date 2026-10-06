@@ -51,16 +51,26 @@ SD3078_RET SD3078_ByteModify(SD3078_ARGS(uint8_t reg, uint8_t mask, uint8_t data
 */
 SD3078_RET SD3078_Unlock(SD3078_NOARG)
 {
-    SD3078_FUNC_BEGIN;
+    i2c_status_type st;
+    i2c_status_type rollback_st;
+
     SD3078_MUTEX_TAKE;
-    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR2,
-                      SD3078_CTR2_WRTC1, SD3078_CTR2_WRTC1);
-    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR1,
-                      SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2,
-                      SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2);
-    if (__sd_status == I2C_OK) SD3078_Status.unlocked = 1U;
+    st = SD3078_ByteModify(SD3078_CTRG_CTR2,
+                           SD3078_CTR2_WRTC1, SD3078_CTR2_WRTC1);
+    if (st == I2C_OK) {
+        st = SD3078_ByteModify(SD3078_CTRG_CTR1,
+                               SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2,
+                               SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2);
+        if (st != I2C_OK) {
+            /* 第二步失败时撤回 WRTC1，避免留下半解锁状态。 */
+            rollback_st = SD3078_ByteModify(SD3078_CTRG_CTR2,
+                                            SD3078_CTR2_WRTC1, 0x00U);
+            (void)rollback_st;
+        }
+    }
+    SD3078_Status.unlocked = (st == I2C_OK) ? 1U : 0U;
     SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
+    return st;
 }
 
 /*SD3078写保护上锁
@@ -69,15 +79,20 @@ SD3078_RET SD3078_Unlock(SD3078_NOARG)
 */
 SD3078_RET SD3078_Lock(SD3078_NOARG)
 {
-    SD3078_FUNC_BEGIN;
+    i2c_status_type st;
+    i2c_status_type st2;
+
     SD3078_MUTEX_TAKE;
-    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR1,
-                      SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2, 0x00U);
-    SD3078_SPAWN_ARGS(SD3078_ByteModify, SD3078_CTRG_CTR2,
-                      SD3078_CTR2_WRTC1, 0x00U);
-    if (__sd_status == I2C_OK) SD3078_Status.unlocked = 0U;
+    st = SD3078_ByteModify(SD3078_CTRG_CTR1,
+                           SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2, 0x00U);
+    /* 即使第一步失败也尝试清 WRTC1，尽最大可能关闭写窗口。 */
+    st2 = SD3078_ByteModify(SD3078_CTRG_CTR2, SD3078_CTR2_WRTC1, 0x00U);
+    if (st == I2C_OK) st = st2;
+
+    /* 任意一组允许位被清掉后芯片已不可写；软件状态按“锁定”处理。 */
+    if (st2 == I2C_OK || st == I2C_OK) SD3078_Status.unlocked = 0U;
     SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
+    return st;
 }
 
 /* ==================== RTC 时间格式收发 ====================

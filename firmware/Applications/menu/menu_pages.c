@@ -21,10 +21,6 @@
 /* ---------- 状态页实时信息缓冲区（ui_task 定时更新） ---------- */
 char menu_status_bat[24] = "--.-V --.-A";
 
-/* 电池初始能量 mWh（2S1P 30Q 标称 7.2V×3.0Ah = 21.6Wh；健康度分母）。
- * PowerBank→Battery 设置页可把当前库仑计最大能量写入它，作为健康度参考。 */
-static int32_t s_batt_init_energy = 21600;
-
 /* ==================== 国际化（i18n）语言表 ====================
  * 键 = 英文文本（menu_pages.c 里所有 label/title/toggle 值直接用英文作键）。
  * menu_tr(key)：英文态返回 en、中文态返回 zh、未配置回退 key 本身。
@@ -457,7 +453,11 @@ static void record_soh_apply(menu_item_t *it)
 {
     (void)it;
     if (SW6306_IsInitialized()) {
-        s_batt_init_energy = (int32_t)SW6306_ReadMaxEnergy_mWh();
+        float wh = SW6306_ReadMaxEnergy_mWh() / 1000.0f;
+        if (wh > 0.1f) {
+            nvm_set_factory_capacity_wh(wh);
+            (void)nvm_save();
+        }
     }
 }
 
@@ -567,6 +567,12 @@ MENU_PAGE_("Status", menu_page_status, menu_items_status);
  * 对未初始化的芯片输出占位符，避免 I2C 空访问（SD3078/SC7A20 未初始化时勿读）。 */
 void menu_status_refresh(void)
 {
+    /* Time 设置页非编辑状态持续跟随 load_task 的最新 RTC 镜像，
+     * 避免长时间停留页面后从进入页时的旧值开始编辑。 */
+    if (menu_current_page() == &menu_page_time && !menu_get_state()->editing) {
+        menu_time_read();
+    }
+
     /* ---- Battery：电压/电流、最大容量、当前容量、健康度、学习状态 ---- */
     if (SW6306_IsInitialized()) {
         /* 容量/库仑计镜像由 SW6306_task 周期更新（CapacityLoad），UI 只读镜像，勿在此 load */
@@ -576,12 +582,15 @@ void menu_status_refresh(void)
                  SW6306_ReadMaxEnergy_mWh() / 1000.0f);
         snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), menu_tr("status.now"),
                  SW6306_ReadRemainEnergy_mWh() / 1000.0f);
-        if (s_batt_init_energy > 0) {
-            /* 健康度 = 最大能量 / 电池初始能量 × 100% */
-            snprintf(menu_status_health, sizeof(menu_status_health), menu_tr("status.health"),
-                     SW6306_ReadMaxEnergy_mWh() / (float)s_batt_init_energy * 100.0f);
-        } else {
-            snprintf(menu_status_health, sizeof(menu_status_health), "--");
+        {
+            float factory_wh = nvm_get_factory_capacity_wh();
+            if (nvm_is_valid() && factory_wh > 0.1f) {
+                /* 健康度 = 当前最大能量 / NVM 出厂能量 × 100% */
+                snprintf(menu_status_health, sizeof(menu_status_health), menu_tr("status.health"),
+                         SW6306_ReadMaxEnergy_mWh() / (factory_wh * 1000.0f) * 100.0f);
+            } else {
+                snprintf(menu_status_health, sizeof(menu_status_health), "--");
+            }
         }
         /* 容量学习状态：0xA2 两位（bit5=END 高位 / bit6=ING 低位）→ 3 态 + Unknown */
         {

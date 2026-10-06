@@ -20,6 +20,9 @@
  * 用 typedef 断言兼容当前 ARMCLANG C 方言，不依赖 _Static_assert 开关。 */
 typedef char nvm_float_must_be_4_bytes[(sizeof(float) == 4U) ? 1 : -1];
 typedef char nvm_i16_must_be_2_bytes[(sizeof(int16_t) == 2U) ? 1 : -1];
+typedef char nvm_layout_must_fill_sd3078[
+    ((NVM_PAYLOAD_SIZE + 2U) == NVM_TOTAL_SIZE &&
+     NVM_TOTAL_SIZE == SD3078_RAM_LEN) ? 1 : -1];
 
 nvm_values_t nvm_data;
 

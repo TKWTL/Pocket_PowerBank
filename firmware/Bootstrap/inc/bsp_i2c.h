@@ -47,6 +47,17 @@ extern volatile uint32_t i2c_fault_code;
 extern volatile uint32_t i2c_recover_count;
 extern volatile uint32_t i2c_recover_reason;
 
+/* ISR 风暴判定（纯计数器，ISR 内不打印，供调试器 Watch）：
+ * 一次"卡死"后若 i2c_evt_irq_cnt 疯涨、而 FreeRTOS tick 基本不动 → 中断风暴。
+ * i2c_last_* 记录最近一次 ISR 现场（sts/pcount/psize/mode/error），用于判读。 */
+extern volatile uint32_t i2c_evt_irq_cnt;
+extern volatile uint32_t i2c_err_irq_cnt;
+extern volatile uint32_t i2c_last_sts;
+extern volatile uint16_t i2c_last_pcount;
+extern volatile uint16_t i2c_last_psize;
+extern volatile uint8_t  i2c_last_mode;
+extern volatile uint32_t i2c_last_error;
+
 #define BSP_I2C_RC_START_FAIL      1U   /* 启动失败：细节为 I2C_ERR_STEP_x（卡在 BUSYF/TDIS/TDC/STOPF…） */
 #define BSP_I2C_RC_NOTIFY_TIMEOUT  2U   /* 等完成通知超时：细节为 0 */
 #define BSP_I2C_RC_TRANS_ERROR     3U   /* 通知到达但事务状态异常：细节为库错误码（INTERRUPT/TDC/ACKFAIL…） */

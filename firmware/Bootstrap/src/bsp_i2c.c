@@ -25,6 +25,17 @@ void i2c_fault_capture(void)
     i2c_fault_count++;
 }
 
+/* ISR 风暴判定（纯计数器，ISR 内不打印）：调试器 Watch 用。
+ * 判据：一次"卡死"后若 evt_cnt 疯涨而 FreeRTOS 的 tick 基本不动，即为中断风暴。 */
+volatile uint32_t i2c_evt_irq_cnt;
+volatile uint32_t i2c_err_irq_cnt;
+/* 最近一次 ISR 快照：卡死后看这里能判断当时的 status/pcount/mode/error */
+volatile uint32_t i2c_last_sts;
+volatile uint16_t i2c_last_pcount;
+volatile uint16_t i2c_last_psize;
+volatile uint8_t  i2c_last_mode;
+volatile uint32_t i2c_last_error;
+
 /* I2C 总线故障恢复：复位 I2C1 外设并重新初始化。
  * 背景：从机拉死总线 / 上次传输异常未复位时 BUSYF 持续为 1，后续所有传输
  * 在启动阶段（i2c_wait_flag 轮询 BUSYF/TDIS/TDC）即超时返回错误，此时中断
@@ -56,7 +67,7 @@ static void i2c_bus_recover(uint32_t reason, uint32_t detail)
  * 失败处理：整笔重试，而不是从断点续传——恢复总线后重新调用库的 *_int() 接口，
  * 由它重新装填 addr/reg/pbuff/pcount/error_code，从第 0 字节重新开始。
  * 每次整笔失败输出一个 '!'，便于串口定位（成功路径零输出）。 */
-#define BSP_I2C_ATTEMPTS   2U   /* 1 次初始 + 1 次重试 */
+#define BSP_I2C_ATTEMPTS   3U   /* 1 次初始 + 2 次重试（失败后重试 2 次） */
 
 #define BSP_I2C_OP_MEM_RD  0U
 #define BSP_I2C_OP_MEM_WR  1U

@@ -438,7 +438,15 @@ void I2C1_EVT_IRQHandler(void)
   i2c_evt_irq_handler(&hi2c1);
 
   /* add user code begin I2C1_EVT_IRQ 1 */
-    if(hi2c1.status == 1){//define I2C_END 1
+    i2c_evt_irq_cnt++;                                  /* 风暴判定计数器（ISR 内不打印） */
+    i2c_last_sts    = I2C1->sts;
+    i2c_last_pcount = hi2c1.pcount;
+    i2c_last_psize  = hi2c1.psize;
+    i2c_last_mode   = (uint8_t)hi2c1.mode;
+    i2c_last_error  = (uint32_t)hi2c1.error_code;
+    /* status==END：正常完成；error_code!=OK：库内异常路径（如异常 TDC/TCRLD，
+     * 库已关闭本事务中断止血）需立即唤醒任务执行校验+总线恢复，不必等 30ms 超时。 */
+    if ((hi2c1.status == BSP_I2C_STATUS_END) || (hi2c1.error_code != I2C_OK)) {
         if (i2c_wait_task != NULL) {
             vTaskNotifyGiveFromISR(
                 i2c_wait_task,
@@ -459,11 +467,25 @@ void I2C1_ERR_IRQHandler(void)
 {
   /* add user code begin I2C1_ERR_IRQ 0 */
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    i2c_fault_capture();   /* 先抓原始故障现场：官方 handler 随后会清掉错误标志 */
   /* add user code end I2C1_ERR_IRQ 0 */
 
   i2c_err_irq_handler(&hi2c1);
 
   /* add user code begin I2C1_ERR_IRQ 1 */
+    i2c_err_irq_cnt++;                                  /* 风暴判定计数器（ISR 内不打印） */
+    i2c_last_sts    = I2C1->sts;
+    i2c_last_pcount = hi2c1.pcount;
+    i2c_last_psize  = hi2c1.psize;
+    i2c_last_mode   = (uint8_t)hi2c1.mode;
+    i2c_last_error  = (uint32_t)hi2c1.error_code;
+    /* [BUGFIX] 官方 i2c_err_irq_handler() 只关闭 ERR_INT，TDC/STOP/TD/RD 中断仍
+     * 使能。若任务侧未及时复位总线，残留中断与下一笔事务（轮询阶段）的标志组合
+     * 会造成中断风暴：CPU 困死在 ISR → 所有任务饿死（整机假死），超时恢复失效。
+     * 此处统一关闭本事务整组中断止血，通知任务侧走 error_code 校验 + 总线恢复。 */
+    i2c_interrupt_enable(I2C1,
+        I2C_ERR_INT | I2C_TDC_INT | I2C_STOP_INT | I2C_ACKFIAL_INT | I2C_TD_INT | I2C_RD_INT,
+        FALSE);
     if (i2c_wait_task != NULL) {
         vTaskNotifyGiveFromISR(
                 i2c_wait_task,

@@ -136,7 +136,6 @@ extern C {
         
 struct SW6306_StatusTypedef
 {
-    uint8_t online;                                                             //SW6306连接成功，表现为有设备响应0x3C的地址
     uint8_t initialized;                                                        //SW6306已初始化，当SW6306失去连接时自动回到未初始化状态
     uint8_t unlocked;                                                           //SW6306已解锁，此时可以对寄存器进行写入
     uint8_t flag;                                                               //标识传输完成与传输状态用变量

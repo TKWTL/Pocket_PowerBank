@@ -497,6 +497,7 @@ static char menu_status_time[16];        /* 时分秒 */
 static char menu_status_date[16];        /* 年月日 */
 static char menu_status_temp[16];        /* 温度 */
 static char menu_status_vbackup[20];     /* 备用电池电压（Vbackup） */
+static char menu_status_uid[20];         /* SD3078 UID（16 位十六进制字符，无前缀后缀） */
 
 static const menu_item_t menu_items_status_battery[] = {
     MENU_ITEM_BACK_("Return"),
@@ -522,6 +523,7 @@ static const menu_item_t menu_items_status_timer[] = {
     MENU_ITEM_INFO_(menu_status_date),
     MENU_ITEM_INFO_(menu_status_temp),
     MENU_ITEM_INFO_(menu_status_vbackup),   /* 备用电池电压（Vbackup） */
+    MENU_ITEM_INFO_(menu_status_uid),       /* SD3078 UID（末项） */
 };
 MENU_PAGE_("Timer", menu_page_status_timer, menu_items_status_timer);
 
@@ -587,7 +589,7 @@ void menu_status_refresh(void)
         snprintf(menu_status_accel_z, sizeof(menu_status_accel_z), "Z: --");
     }
 
-    /* ---- Timer：时分秒、年月日、温度、备用电池电压（读 SD3078 驱动句柄镜像） ---- */
+    /* ---- Timer：时分秒、年月日、温度、备用电池电压、UID（读 SD3078 驱动句柄镜像） ---- */
     if (SD3078_IsInitialized()) {
         snprintf(menu_status_time, sizeof(menu_status_time), menu_tr("status.time"),
                  SD3078_ReadHour(), SD3078_ReadMin(), SD3078_ReadSec());
@@ -597,11 +599,16 @@ void menu_status_refresh(void)
                  (int)SD3078_ReadTemp());
         snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), menu_tr("status.vbackup"),
                  SD3078_ReadBatt() / 1000.0f);
+        /* UID：0x72~0x79 共 8 字节 → 16 个十六进制字符，无前缀后缀 */
+        snprintf(menu_status_uid, sizeof(menu_status_uid), "%02X%02X%02X%02X%02X%02X%02X%02X",
+                 SD3078_ReadID(0), SD3078_ReadID(1), SD3078_ReadID(2), SD3078_ReadID(3),
+                 SD3078_ReadID(4), SD3078_ReadID(5), SD3078_ReadID(6), SD3078_ReadID(7));
     } else {
         snprintf(menu_status_time, sizeof(menu_status_time), "--:--:--");
         snprintf(menu_status_date, sizeof(menu_status_date), "----");
         snprintf(menu_status_temp, sizeof(menu_status_temp), "Temp: --");
         snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), "Vbackup: --");
+        snprintf(menu_status_uid, sizeof(menu_status_uid), "----------------");
     }
 }
 

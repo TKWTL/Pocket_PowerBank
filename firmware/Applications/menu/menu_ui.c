@@ -279,7 +279,7 @@ static void refresh_prev_next(const menu_page_t *pg, uint8_t index)
  * 动画中所有文本一律按未选中格式（纯 label，无箭头/选项）显示——完整格式长文本
  * 在角落/过渡位置会与滑出项重叠成"影子"；动画结束由 slide_commit_* 做对象交接
  * 后中间项才切换完整格式并高亮。滑动期间所有项灰色，高亮只出现在静止的中间项
- * （永不两个同时高亮）。动画终态 → 静止态的跳变帧用 disp_flush_enabled 屏蔽。 */
+ * （永不两个同时高亮）。 */
 
 /* 停止全部 PID（防中断后残留动画继续驱动对象，导致角落被拖出屏/状态错乱）。
  * 同时把 current 吸附到 target：动画结束/打断时对象精确停在目标位，
@@ -309,11 +309,6 @@ static void snap_static(const menu_page_t *pg, uint8_t index)
     lv_obj_add_flag(s_item_in, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_item_next_in, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_item_prev_in, LV_OBJ_FLAG_HIDDEN);
-    /* 复位角落不透明度（动画淡出后可能停在透明；下次滑动 start 时重新设置） */
-    lv_obj_set_style_opa(s_item_prev,    LV_OPA_COVER, 0);
-    lv_obj_set_style_opa(s_item_next,    LV_OPA_COVER, 0);
-    lv_obj_set_style_opa(s_item_prev_in, LV_OPA_COVER, 0);
-    lv_obj_set_style_opa(s_item_next_in, LV_OPA_COVER, 0);
 
     if (pg && index < pg->item_count) {
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
@@ -454,10 +449,6 @@ static void slide_end_common(void)
 {
     s_sliding   = false;
     s_slide_dir = 0;
-    lv_obj_set_style_opa(s_item_prev,    LV_OPA_COVER, 0);
-    lv_obj_set_style_opa(s_item_next,    LV_OPA_COVER, 0);
-    lv_obj_set_style_opa(s_item_prev_in, LV_OPA_COVER, 0);
-    lv_obj_set_style_opa(s_item_next_in, LV_OPA_COVER, 0);
 }
 
 static void slide_commit_next(const menu_page_t *pg, uint8_t index)
@@ -491,7 +482,10 @@ static void slide_commit_next(const menu_page_t *pg, uint8_t index)
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
         lv_label_set_text(s_item, buf);
         lv_obj_set_style_text_color(s_item, menu_theme_get()->text, 0);
-        lv_obj_update_layout(s_item);
+        /* 必须重新居中：动画期间中间项按【未选中简格式】文本宽度定位，
+         * 换成完整格式（带箭头/选项）后宽度变了，沿用旧 x 会让它偏左甚至看起来"消失"
+         * （snap_static 走的是同一套：set_text 后 item_recenter） */
+        item_recenter(s_item);
         fmt_item_text(&pg->items[(index + 1) % n], false, false, buf, sizeof(buf));
         lv_label_set_text(s_item_next, buf);
         pos_next_corner(s_item_next);
@@ -515,8 +509,15 @@ static void slide_commit_prev(const menu_page_t *pg, uint8_t index)
     s_item_prev = s_item_prev_in;    /* 滑入项 → 左上角（已在位，不改坐标） */
     s_item      = s_item_in;         /* 滑入项 → 中间（已在位，不改坐标） */
     s_item_next = oi;                /* B → 右下角（已在位，不改坐标） */
+    /* 备用对象重新分配（必须与 NEXT 完全镜像，6 个角色只能对应 6 个不同对象）：
+     *  - 旧 prev：动画中被隐藏（那时它还是 s_item_prev）→ 转下一轮的 s_item_in
+     *  - 旧 next：向左滑出屏外（那时它还是 s_item_next）→ 转下一轮的 s_item_prev_in
+     *  - s_item_next_in 保持原备用对象不动
+     * 注意：这里曾经写成 s_item_next_in = on，导致 s_item_prev 与 s_item_prev_in
+     * 指向同一对象；此后每次 PREV 都少一个独立对象，最终多个角色重叠、
+     * 左上角项被一起隐藏、以及"高亮项被搬到错误位置"。 */
     s_item_in      = op;
-    s_item_next_in = on;
+    s_item_prev_in = on;
 
     /* 同 NEXT：交接后三个静止对象显式可见（PREV 的 B 当时是被隐藏的 s_item_prev） */
     lv_obj_remove_flag(s_item_prev, LV_OBJ_FLAG_HIDDEN);
@@ -527,7 +528,8 @@ static void slide_commit_prev(const menu_page_t *pg, uint8_t index)
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
         lv_label_set_text(s_item, buf);
         lv_obj_set_style_text_color(s_item, menu_theme_get()->text, 0);
-        lv_obj_update_layout(s_item);
+        /* 同 NEXT：换完整格式后必须重新居中（动画期间是按简格式宽度定位的） */
+        item_recenter(s_item);
         fmt_item_text(&pg->items[(index + n - 1) % n], false, false, buf, sizeof(buf));
         lv_label_set_text(s_item_prev, buf);
         lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);
@@ -548,9 +550,10 @@ static void slide_finish(void)
         slide_commit_prev(pg, index);
     }
 
-    /* 强制整屏重绘一次：滑动过程中 GC9D01 上可能留下未被覆盖的脏像素
-     * （尤其是文字底部行，局部失效不保证包含这些行）。
-     * 整屏失效 → 下一帧全量重绘 → 任何残留都会被正确的背景+文字覆盖。 */
+    /* 收尾整屏重绘一次：滑动期间 GC9D01 上可能留下未被覆盖的脏像素
+     * （随机位置/长度的虚线），局部失效不保证把这些行包含进去。
+     * 整屏失效 → 下一帧全量重绘 → 被正确的背景+文字覆盖。
+     * 注：这是"收尾一次"，不是每帧；删掉它会在动画落定后残留虚线（实测）。 */
     lv_obj_invalidate(s_scr);
 }
 
@@ -869,12 +872,6 @@ static void menu_ui_anim_tick(lv_timer_t *t)
         !s_prev_in_x.active && !s_next_in_x.active) {
         slide_finish();
     }
-    /* 动画期间每帧整屏失效：及时用背景填充移动反方向留下的灰色残留
-     * （部分刷新下元素旧位置边缘可能未被覆盖）。 */
-    if (s_sliding || s_prev_out_x.active || s_next_out_x.active ||
-        s_prev_in_x.active || s_next_in_x.active) {
-        lv_obj_invalidate(s_scr);
-    }
     /* 图标页滚动/缩放/透明度动画 */
     if (s_icon_page) {
         icon_anim_tick();
@@ -1002,10 +999,15 @@ void menu_ui_redraw(void)
         /* 图标页：显示顶部文字条（名称+时间） */
         lv_obj_remove_flag(s_icon_hint, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_icon_clock, LV_OBJ_FLAG_HIDDEN);
-        /* 若上一次是文本页滑动中：只停残留动画，不动显隐（文本元素上方已统一隐藏） */
-        if (s_sliding) {
+        /* 必须显式停掉滑动与四个角落 PID：menu_ui_anim_tick 里角落 PID 的执行
+         * 只判各自的 .active，不判 s_sliding——只清标志的话，文本页切走之后
+         * 已被隐藏的文本对象仍会被动画定时器继续搬动（位置/显隐残留）。
+         * 中断方向也一并清掉，避免下次进文本页沿用旧方向收尾。 */
+        if (s_sliding || s_prev_out_x.active || s_next_out_x.active ||
+            s_prev_in_x.active || s_next_in_x.active) {
             pid_stop_all();
             s_sliding = false;
+            s_slide_dir = 0;
         }
     } else {
         lv_obj_remove_flag(s_header, LV_OBJ_FLAG_HIDDEN);

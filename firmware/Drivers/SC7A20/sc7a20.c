@@ -161,7 +161,7 @@ SC7A20_RET SC7A20_AccelLoad(SC7A20_NOARG)
      *       同一寄存器值 → 三轴数据被复制成相同值（实测坑，勿改回）。 */
     if(SC7A20_I2C_Receive(SC7A20_I2C_ADDR, SC7A20_STRG_OUT_AUTO, t, 6, (uint8_t*)&SC7A20_Status.flag) != I2C_OK)
     {
-        SC7A20_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SC7A20_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮 load_task 重新初始化 */
         SC7A20_MUTEX_GIVE;
         SC7A20_FUNC_END;
     }
@@ -216,7 +216,7 @@ SC7A20_RET SC7A20_TempLoad(SC7A20_NOARG)
     SC7A20_MUTEX_TAKE;
     if(SC7A20_I2C_Receive(SC7A20_I2C_ADDR, SC7A20_STRG_OUT_TEMP_L, t, 2, (uint8_t*)&SC7A20_Status.flag) != I2C_OK)
     {
-        SC7A20_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SC7A20_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮 load_task 重新初始化 */
         SC7A20_MUTEX_GIVE;
         SC7A20_FUNC_END;
     }
@@ -239,7 +239,7 @@ SC7A20_RET SC7A20_StatusLoad(SC7A20_NOARG)//读取状态寄存器镜像（0x27�
     SC7A20_MUTEX_TAKE;
     if(SC7A20_I2C_Receive(SC7A20_I2C_ADDR, SC7A20_STRG_STATUS, &st, 1, (uint8_t*)&SC7A20_Status.flag) != I2C_OK)
     {
-        SC7A20_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SC7A20_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮 load_task 重新初始化 */
         SC7A20_MUTEX_GIVE;
         SC7A20_FUNC_END;
     }
@@ -469,8 +469,7 @@ SC7A20_RET SC7A20_Init(SC7A20_NOARG)
     SC7A20_MUTEX_TAKE;
     //读取WHO_AM_I校验芯片在线（应为0x11）
     SC7A20_SPAWN_ARGS(SC7A20_ByteRead, SC7A20_STRG_WHO_AM_I, SC7A20_Status.sendbuf);
-    SC7A20_Status.online = (SC7A20_Status.sendbuf[0] == SC7A20_WHO_AM_I_VALUE);
-    if(SC7A20_Status.online)
+    if(SC7A20_Status.sendbuf[0] == SC7A20_WHO_AM_I_VALUE)
     {
         //① 修正INT极性：H_LACTIVE=1（低有效），无事件时INT1输出高电平。
         //   上电默认H_LACTIVE=0（高有效）且INT1推挽输出，无事件时主动拉低，
@@ -498,14 +497,9 @@ SC7A20_RET SC7A20_Init(SC7A20_NOARG)
     SC7A20_FUNC_END;
 }
 
-uint8_t SC7A20_IsInitialized(void)//检测SC7A20是否已初始化过
+uint8_t SC7A20_IsInitialized(void)//检测SC7A20是否已初始化过（通信失败时会返回 0）
 {
     return SC7A20_Status.initialized;
-}
-
-uint8_t SC7A20_IsOnline(void)//检测SC7A20是否在线（WHO_AM_I校验）
-{
-    return SC7A20_Status.online;
 }
 
 /******************************错误查询区**************************************/
@@ -558,7 +552,7 @@ SC7A20_RET SC7A20_FreefallEnable(SC7A20_NOARG)
     uint8_t line;
     SC7A20_FUNC_BEGIN;
     line = SC7A20_Status.freefall_cfg.int_line;
-    if(SC7A20_Status.online == 0)
+    if(SC7A20_Status.initialized == 0)
     {
         SC7A20_Status.last_error = SC7A20_ERR_NOT_ONLINE;
     }
@@ -661,7 +655,7 @@ SC7A20_RET SC7A20_MotionConfig(SC7A20_ARGS(const sc7a20_motion_config_t *cfg))
 SC7A20_RET SC7A20_MotionEnable(SC7A20_NOARG)
 {
     SC7A20_FUNC_BEGIN;
-    if(SC7A20_Status.online == 0)
+    if(SC7A20_Status.initialized == 0)
     {
         SC7A20_Status.last_error = SC7A20_ERR_NOT_ONLINE;
     }
@@ -788,7 +782,7 @@ SC7A20_RET SC7A20_VibrationEventEnable(SC7A20_NOARG)
     uint8_t line, cfg, axis;
     SC7A20_FUNC_BEGIN;
     line = SC7A20_Status.vibration_cfg.int_line;
-    if(SC7A20_Status.online == 0)
+    if(SC7A20_Status.initialized == 0)
     {
         SC7A20_Status.last_error = SC7A20_ERR_NOT_ONLINE;
     }

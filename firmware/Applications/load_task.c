@@ -134,7 +134,9 @@ static void wled_soc_manage(void)
     }
 }
 
-/* load_task 任务入口：10ms 状态机（周期 500ms 刷新 + 请求即立即一轮完整读取） */
+/* load_task 任务入口：10ms 状态机（周期 500ms 刷新 + 请求即立即一轮完整读取）
+ * 注：曾尝试"INT 刷新提醒驱动"（SD3078 在共用 INT 线上输出 2Hz，由 EXTI 通知本任务），
+ * 因长期占用共用 INT 线已回滚，恢复为周期轮询 + 事件驱动。 */
 void load_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -173,7 +175,7 @@ void load_task(void *pvParameters)
             if (SC7A20_IsInitialized()) {
                 SC7A20_AccelLoad();      /* 三轴加速度原始数据镜像（Read*_mg 读它换算） */
             }
-            wled_soc_manage();   /* 500ms：管理假 C2 口（插入/让位/补位） */
+            wled_soc_manage();   /* 500ms：管理假 A1 口（插入/让位/补位） */
             WLED_Update();       /* 500ms：WLED 保护（仅开启时判断，过温/零电量强制关灯） */
         }
         /* 每 10ms：WLED 亮度渐变（相位逼近目标档位；灯关时立即返回）+ 轮询计时 */

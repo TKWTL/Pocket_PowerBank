@@ -1832,6 +1832,32 @@ i2c_status_type i2c_smbus_slave_transmit(i2c_handle_type* hi2c, uint8_t* pdata, 
   return I2C_OK;
 }
 
+/* 本事务整组中断：任一异常都要全关，避免"只关 ERR_INT、其余标志仍在置位"时
+ * 退出 ISR 立刻又进 EVT ISR 的 tail-chaining 风暴。 */
+#define I2C_TXN_INTERRUPT_MASK  (I2C_ERR_INT | I2C_TDC_INT | I2C_STOP_INT | \
+                                 I2C_ACKFIAL_INT | I2C_TD_INT | I2C_RD_INT)
+
+/**
+  * @brief  ISR 层异常止血（中断模式与 DMA 模式共用）。
+  *        只做四件事：记录错误码、把 status 置 END（让任务侧立刻收到通知）、
+  *        关闭本事务整组中断 + 两级 DMA 请求、返回。
+  *        真正的 i2c_reset()/重新初始化/整笔重试由任务层（bsp_i2c supervisor）完成。
+  * @param  hi2c: the handle points to the operation information.
+  * @param  err : 错误码（i2c_status_type）。
+  * @retval none.
+  */
+static void i2c_abort_isr(i2c_handle_type* hi2c, i2c_status_type err)
+{
+  hi2c->error_code = err;
+  hi2c->status     = I2C_END;          /* 关键：否则任务侧只能等 session timeout */
+
+  /* 关掉所有会继续触发的本事务中断 */
+  i2c_interrupt_enable(hi2c->i2cx, I2C_TXN_INTERRUPT_MASK, FALSE);
+  /* 断掉可能仍在请求的 DMA */
+  i2c_dma_enable(hi2c->i2cx, I2C_DMA_REQUEST_TX, FALSE);
+  i2c_dma_enable(hi2c->i2cx, I2C_DMA_REQUEST_RX, FALSE);
+}
+
 /**
   * @brief  master interrupt processing function in interrupt mode.
   * @param  hi2c: the handle points to the operation information.
@@ -1854,6 +1880,15 @@ i2c_status_type i2c_master_irq_handler_int(i2c_handle_type* hi2c)
   }
   else if (i2c_flag_get(hi2c->i2cx, I2C_TDIS_FLAG) != RESET)
   {
+    /* [BUGFIX] 必须防 pcount/psize 下溢：总线噪声或错误状态机之后若多来一次 TD
+     * 事件，pcount(0)-- 会回绕成 65535，且 pbuff 继续越界读写 → RAM 破坏 /
+     * HardFault。不可能状态一律走 ISR 止血。 */
+    if ((hi2c->pcount == 0) || (hi2c->psize == 0))
+    {
+      i2c_abort_isr(hi2c, I2C_ERR_INTERRUPT);
+      return I2C_ERR_INTERRUPT;
+    }
+
     /* send data */
     i2c_data_send(hi2c->i2cx, *hi2c->pbuff++);
     hi2c->pcount--;
@@ -1871,13 +1906,19 @@ i2c_status_type i2c_master_irq_handler_int(i2c_handle_type* hi2c)
       /* [BUGFIX] 原实现只 return I2C_ERR_TCRLD：异常标志未清、中断未关，
        * 会与 TDC 异常同源地反复进入本 ISR（中断风暴）→ 整机假死。
        * 关闭本事务整组中断并记录错误码，由上层复位总线恢复。 */
-      i2c_interrupt_enable(hi2c->i2cx, I2C_ERR_INT | I2C_TDC_INT | I2C_STOP_INT | I2C_ACKFIAL_INT | I2C_TD_INT | I2C_RD_INT, FALSE);
-      hi2c->error_code = I2C_ERR_TCRLD;
+      i2c_abort_isr(hi2c, I2C_ERR_TCRLD);
       return I2C_ERR_TCRLD;
     }
   }
   else if (i2c_flag_get(hi2c->i2cx, I2C_RDBF_FLAG) != RESET)
   {
+    /* [BUGFIX] 同 TDIS：防 pcount/psize 下溢导致 pbuff 越界写（RAM 破坏） */
+    if ((hi2c->pcount == 0) || (hi2c->psize == 0))
+    {
+      i2c_abort_isr(hi2c, I2C_ERR_INTERRUPT);
+      return I2C_ERR_INTERRUPT;
+    }
+
     /* read data */
     (*hi2c->pbuff++) = i2c_data_receive(hi2c->i2cx);
     hi2c->pcount--;
@@ -1899,8 +1940,7 @@ i2c_status_type i2c_master_irq_handler_int(i2c_handle_type* hi2c)
        * TDC 持续置位 → CPU 反复进入本 ISR（中断风暴）→ 任务全部饿死（整机假死，
        * 任务侧超时恢复机制也因无法运行而失效）。
        * 关闭本事务整组中断并记录错误码，由上层复位总线恢复。 */
-      i2c_interrupt_enable(hi2c->i2cx, I2C_ERR_INT | I2C_TDC_INT | I2C_STOP_INT | I2C_ACKFIAL_INT | I2C_TD_INT | I2C_RD_INT, FALSE);
-      hi2c->error_code = I2C_ERR_TDC;
+      i2c_abort_isr(hi2c, I2C_ERR_TDC);
       return I2C_ERR_TDC;
     }
   }
@@ -2059,6 +2099,11 @@ i2c_status_type i2c_master_irq_handler_dma(i2c_handle_type* hi2c)
     }
     else
     {
+      /* [BUGFIX] 与中断模式同源：原实现只 return I2C_ERR_TCRLD——标志未清、
+       * 中断未关、status 未置 END，会反复进 ISR 且任务侧只能等超时。
+       * 统一走 i2c_abort_isr 止血。DMA 模式当前未被 bsp_i2c 使用，
+       * 但一并修掉，避免将来切换后重现同一问题。 */
+      i2c_abort_isr(hi2c, I2C_ERR_TCRLD);
       return I2C_ERR_TCRLD;
     }
   }

@@ -484,7 +484,7 @@ void wk_i2c1_init(void)
   /* config i2c1 clock source */
   crm_i2c_clock_select(CRM_I2C1, CRM_I2C_CLOCK_SOURCE_PCLK);
   
-  i2c_init(I2C1, 10, 0x20B00F1B);
+  i2c_init(I2C1, 15, 0x40E04141);
   i2c_own_address1_set(I2C1, I2C_ADDRESS_MODE_7BIT, 0x0);
   i2c_ack_enable(I2C1, TRUE);
   i2c_clock_stretch_enable(I2C1, TRUE);

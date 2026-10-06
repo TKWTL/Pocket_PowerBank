@@ -75,6 +75,62 @@ SD3078_RET SD3078_Lock(SD3078_NOARG)
     SD3078_FUNC_END;
 }
 
+/* ==================== 时间格式统一收发 ====================
+ * SD3078 有四组同格式（秒分时周日月年）的 7 字节时间寄存器：
+ *   0x00~0x06 RTC 时间 / 0x07~0x0D 报警时间 / 0x20~0x26 历史最低温时间 / 0x27~0x2D 历史最高温时间。
+ * 这里各用一份函数服务全部四组，调用方只传组基地址（见 sd3078.h 的 sd3078_time_t）。
+ * BCD 与 12/24 制式处理都收在这一处，不再逐处分写。 */
+
+/* 读一组时间到 t（BCD 原始值）；week 非 BCD 直接取低 3 位，hour 屏蔽 12_/24 位。
+ * 返回非 I2C_OK 表示通信失败（调用方决定是否清 initialized）。 */
+static i2c_status_type sd3078_time_read(uint8_t base, sd3078_time_t *t)
+{
+    uint8_t b[SD3078_TIME_FIELDS];
+    if(SD3078_I2C_Receive(SD3078_I2C_ADDR, base, b, SD3078_TIME_FIELDS, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
+    {
+        return I2C_ERR_INTERRUPT;
+    }
+    /* 字节序固定为 秒 分 时 周 日 月 年，与 b[] 下标一致 */
+    SD3078_SEC(t)   = b[0];
+    SD3078_MIN(t)   = b[1];
+    SD3078_HOUR(t)  = (uint8_t)(b[2] & ~SD3078_HOUR_1224);
+    SD3078_WEEK(t)  = (uint8_t)(b[3] & SD3078_WEEK_MSK);
+    SD3078_DAY(t)   = b[4];
+    SD3078_MONTH(t) = b[5];
+    SD3078_YEAR(t)  = b[6];
+    return I2C_OK;
+}
+
+/* 由 BCD 镜像生成十进制镜像（week 非 BCD，原样搬运） */
+static void sd3078_time_to_dec(sd3078_time_t *src, sd3078_time_t *dst)
+{
+    SD3078_SEC(dst)   = SD3078_BcdToDec(SD3078_SEC(src));
+    SD3078_MIN(dst)   = SD3078_BcdToDec(SD3078_MIN(src));
+    SD3078_HOUR(dst)  = SD3078_BcdToDec(SD3078_HOUR(src));
+    SD3078_WEEK(dst)  = SD3078_WEEK(src);
+    SD3078_DAY(dst)   = SD3078_BcdToDec(SD3078_DAY(src));
+    SD3078_MONTH(dst) = SD3078_BcdToDec(SD3078_MONTH(src));
+    SD3078_YEAR(dst)  = SD3078_BcdToDec(SD3078_YEAR(src));
+}
+
+/* 写一组时间（t 为十进制；内部转 BCD 并按 SD3078_24HOUR 置 12_/24 位）。
+ * 一次性写 7 字节：单独写某一位会引起时间数据错误进位。 */
+static i2c_status_type sd3078_time_write(uint8_t base, const sd3078_time_t *t)
+{
+    uint8_t b[SD3078_TIME_FIELDS];
+    b[0] = SD3078_DecToBcd((uint8_t)SD3078_SEC(t));
+    b[1] = SD3078_DecToBcd((uint8_t)SD3078_MIN(t));
+    b[2] = SD3078_DecToBcd((uint8_t)SD3078_HOUR(t));
+#if SD3078_24HOUR
+    b[2] |= SD3078_HOUR_1224;
+#endif
+    b[3] = (uint8_t)SD3078_WEEK(t);          //星期非 BCD
+    b[4] = SD3078_DecToBcd((uint8_t)SD3078_DAY(t));
+    b[5] = SD3078_DecToBcd((uint8_t)SD3078_MONTH(t));
+    b[6] = SD3078_DecToBcd((uint8_t)SD3078_YEAR(t));
+    return SD3078_I2C_Transmit(SD3078_I2C_ADDR, base, b, SD3078_TIME_FIELDS, (uint8_t*)&SD3078_Status.flag);
+}
+
 /******************************实时时钟操作区**********************************/
 /*读取实时时钟
 /当芯片收到读实时时钟数据命令时，所有实时时钟数据被锁存（走时不受影响），可避免错读
@@ -82,92 +138,36 @@ SD3078_RET SD3078_Lock(SD3078_NOARG)
 */
 SD3078_RET SD3078_TimeLoad(SD3078_NOARG)
 {
-    uint8_t t[7];                    /* 读缓冲：失败时镜像保持上一次有效值（不写入半帧数据） */
     SD3078_FUNC_BEGIN;
     SD3078_MUTEX_TAKE;
-    if(SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_SEC, t, 7, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
+    if(sd3078_time_read(SD3078_STRG_SEC, &SD3078_Status.time) != I2C_OK)
     {
-        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮 load_task 重新初始化 */
         SD3078_MUTEX_GIVE;
         SD3078_FUNC_END;
     }
-    SD3078_Status.sec   = t[0];
-    SD3078_Status.min   = t[1];
-    SD3078_Status.hour  = t[2];
-    SD3078_Status.week  = t[3];
-    SD3078_Status.day   = t[4];
-    SD3078_Status.month = t[5];
-    SD3078_Status.year  = t[6];
-    /* 24小时制下屏蔽小时寄存器12_/24位（作用于BCD镜像） */
-    SD3078_Status.hour &= ~SD3078_HOUR_1224;
-    /* 保留原始BCD镜像的同时转换为十进制，SD3078_Read*()直接返回十进制 */
-    SD3078_Status.sec_dec   = SD3078_BcdToDec(SD3078_Status.sec);
-    SD3078_Status.min_dec   = SD3078_BcdToDec(SD3078_Status.min);
-    SD3078_Status.hour_dec  = SD3078_BcdToDec(SD3078_Status.hour);
-    SD3078_Status.week_dec  = (uint8_t)(SD3078_Status.week & SD3078_WEEK_MSK); //星期非BCD，直接取低3位
-    SD3078_Status.day_dec   = SD3078_BcdToDec(SD3078_Status.day);
-    SD3078_Status.month_dec = SD3078_BcdToDec(SD3078_Status.month);
-    SD3078_Status.year_dec  = SD3078_BcdToDec(SD3078_Status.year);
+    sd3078_time_to_dec(&SD3078_Status.time, &SD3078_Status.time_dec);
     SD3078_MUTEX_GIVE;
     SD3078_FUNC_END;
 }
-uint8_t SD3078_ReadSec(void)//读取秒（十进制，TimeLoad后有效）
-{
-    return SD3078_Status.sec_dec;
-}
-uint8_t SD3078_ReadMin(void)//读取分钟（十进制）
-{
-    return SD3078_Status.min_dec;
-}
-uint8_t SD3078_ReadHour(void)//读取小时（十进制）
-{
-    return SD3078_Status.hour_dec;
-}
-uint8_t SD3078_ReadWeek(void)//读取星期（十进制，0~6，0=星期日）
-{
-    return SD3078_Status.week_dec;
-}
-uint8_t SD3078_ReadDay(void)//读取日（十进制）
-{
-    return SD3078_Status.day_dec;
-}
-uint8_t SD3078_ReadMonth(void)//读取月（十进制）
-{
-    return SD3078_Status.month_dec;
-}
-uint8_t SD3078_ReadYear(void)//读取年（十进制，0~99）
-{
-    return SD3078_Status.year_dec;
-}
-/* BCD后缀API：直接提取原始BCD镜像（保留寄存器原值） */
-uint8_t SD3078_ReadSecBCD(void)//读取秒（原始BCD镜像）
-{
-    return SD3078_Status.sec;
-}
-uint8_t SD3078_ReadMinBCD(void)//读取分钟（原始BCD镜像）
-{
-    return SD3078_Status.min;
-}
-uint8_t SD3078_ReadHourBCD(void)//读取小时（原始BCD镜像）
-{
-    return SD3078_Status.hour;
-}
-uint8_t SD3078_ReadWeekBCD(void)//读取星期（原始镜像）
-{
-    return SD3078_Status.week;
-}
-uint8_t SD3078_ReadDayBCD(void)//读取日（原始BCD镜像）
-{
-    return SD3078_Status.day;
-}
-uint8_t SD3078_ReadMonthBCD(void)//读取月（原始BCD镜像）
-{
-    return SD3078_Status.month;
-}
-uint8_t SD3078_ReadYearBCD(void)//读取年（原始BCD镜像）
-{
-    return SD3078_Status.year;
-}
+/* 时间读取 API：十进制镜像（TimeLoad 后有效）与原始 BCD 镜像各一组。
+ * 现在只是统一结构体的取值，不再是 14 个手写样板。 */
+uint8_t SD3078_ReadSec(void)   { return (uint8_t)SD3078_SEC(&SD3078_Status.time_dec); }
+uint8_t SD3078_ReadMin(void)   { return (uint8_t)SD3078_MIN(&SD3078_Status.time_dec); }
+uint8_t SD3078_ReadHour(void)  { return (uint8_t)SD3078_HOUR(&SD3078_Status.time_dec); }
+uint8_t SD3078_ReadWeek(void)  { return (uint8_t)SD3078_WEEK(&SD3078_Status.time_dec); }
+uint8_t SD3078_ReadDay(void)   { return (uint8_t)SD3078_DAY(&SD3078_Status.time_dec); }
+uint8_t SD3078_ReadMonth(void) { return (uint8_t)SD3078_MONTH(&SD3078_Status.time_dec); }
+uint8_t SD3078_ReadYear(void)  { return (uint8_t)SD3078_YEAR(&SD3078_Status.time_dec); }
+
+uint8_t SD3078_ReadSecBCD(void)   { return (uint8_t)SD3078_SEC(&SD3078_Status.time); }
+uint8_t SD3078_ReadMinBCD(void)   { return (uint8_t)SD3078_MIN(&SD3078_Status.time); }
+uint8_t SD3078_ReadHourBCD(void)  { return (uint8_t)SD3078_HOUR(&SD3078_Status.time); }
+uint8_t SD3078_ReadWeekBCD(void)  { return (uint8_t)SD3078_WEEK(&SD3078_Status.time); }
+uint8_t SD3078_ReadDayBCD(void)   { return (uint8_t)SD3078_DAY(&SD3078_Status.time); }
+uint8_t SD3078_ReadMonthBCD(void) { return (uint8_t)SD3078_MONTH(&SD3078_Status.time); }
+uint8_t SD3078_ReadYearBCD(void)  { return (uint8_t)SD3078_YEAR(&SD3078_Status.time); }
+
 uint8_t SD3078_BcdToDec(uint8_t bcd)//BCD → 十进制（时间/日期寄存器为 BCD 码）
 {
     return (uint8_t)(((bcd >> 4) & 0x0FU) * 10U + (bcd & 0x0FU));
@@ -177,53 +177,16 @@ uint8_t SD3078_DecToBcd(uint8_t dec)//十进制 → BCD（时间/日期寄存器
     return (uint8_t)(((dec / 10U) << 4) | (dec % 10U));
 }
 
-/*设置实时时钟（BCD 输入）
+/*设置实时时钟
 /写实时时间数据时不可以单独写其中某一位，必须一次性写入全部7个实时时钟数据（00H~06H），
 /否则可能引起时间数据错误进位
-/hour为BCD码，24小时制下需要置12_/24位（本库根据SD3078_24HOUR宏自动处理）
+/t 为十进制值（0~99/0~12/1~31/0~6/0~23/0~59/0~59），内部转 BCD 并按 SD3078_24HOUR 置 12_/24 位
 */
-SD3078_RET SD3078_TimeSetBCD(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t week, uint8_t hour, uint8_t min, uint8_t sec))
+SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(const sd3078_time_t *t))
 {
     SD3078_FUNC_BEGIN;
     SD3078_MUTEX_TAKE;
-#if SD3078_24HOUR
-    hour |= SD3078_HOUR_1224;
-#endif
-    SD3078_Status.sendbuf[0] = sec;
-    SD3078_Status.sendbuf[1] = min;
-    SD3078_Status.sendbuf[2] = hour;
-    SD3078_Status.sendbuf[3] = week;
-    SD3078_Status.sendbuf[4] = day;
-    SD3078_Status.sendbuf[5] = month;
-    SD3078_Status.sendbuf[6] = year;
-    SD3078_EXEC(SD3078_I2C_Transmit(SD3078_I2C_ADDR, SD3078_STRG_SEC, SD3078_Status.sendbuf, 7, (uint8_t*)&SD3078_Status.flag));
-    SD3078_UNTIL(SD3078_Status.flag);
-    //写秒寄存器时会对秒以下内部计数器清零，实现时间同步
-    SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
-}
-
-/*设置实时时钟（二进制/十进制输入，内部转 BCD）
-/写实时时间数据时不可以单独写其中某一位，必须一次性写入全部7个实时时钟数据（00H~06H），
-/否则可能引起时间数据错误进位
-/hour为十进制（0~23），24小时制下需要置12_/24位（本库根据SD3078_24HOUR宏自动处理）
-*/
-SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t week, uint8_t hour, uint8_t min, uint8_t sec))
-{
-    SD3078_FUNC_BEGIN;
-    SD3078_MUTEX_TAKE;
-    SD3078_Status.sendbuf[0] = SD3078_DecToBcd(sec);
-    SD3078_Status.sendbuf[1] = SD3078_DecToBcd(min);
-    SD3078_Status.sendbuf[2] = SD3078_DecToBcd(hour);
-    SD3078_Status.sendbuf[3] = week;
-    SD3078_Status.sendbuf[4] = SD3078_DecToBcd(day);
-    SD3078_Status.sendbuf[5] = SD3078_DecToBcd(month);
-    SD3078_Status.sendbuf[6] = SD3078_DecToBcd(year);
-#if SD3078_24HOUR
-    SD3078_Status.sendbuf[2] |= SD3078_HOUR_1224;
-#endif
-    SD3078_EXEC(SD3078_I2C_Transmit(SD3078_I2C_ADDR, SD3078_STRG_SEC, SD3078_Status.sendbuf, 7, (uint8_t*)&SD3078_Status.flag));
-    SD3078_UNTIL(SD3078_Status.flag);
+    SD3078_SPAWN_ARGS(sd3078_time_write, SD3078_STRG_SEC, t);
     //写秒寄存器时会对秒以下内部计数器清零，实现时间同步
     SD3078_MUTEX_GIVE;
     SD3078_FUNC_END;
@@ -243,29 +206,43 @@ SD3078_RET SD3078_RequestTimeSet(SD3078_ARGS(uint8_t year, uint8_t month, uint8_
     SD3078_FUNC_END;
 }
 
-/* 检测并提交时间设置请求（load_task 0.5s 周期调用；星期保留句柄镜像当前值 week_dec）
+/* 检测并提交时间设置请求（load_task 0.5s 周期调用；星期保留句柄镜像当前值）
  * 内部依次调用 Unlock/TimeSetDec/Lock（各含互斥），自身不持锁，避免嵌套死锁 */
 SD3078_RET SD3078_TimeSetProcess(SD3078_NOARG)
 {
+    sd3078_time_t t;
     SD3078_FUNC_BEGIN;
     if (SD3078_Status.time_set_pending) {
-        SD3078_SPAWN_ARGS(SD3078_Unlock);
-        SD3078_SPAWN_ARGS(SD3078_TimeSetDec, SD3078_Status.set_year, SD3078_Status.set_month,
-                          SD3078_Status.set_day, SD3078_Status.week_dec,
-                          SD3078_Status.set_hour, SD3078_Status.set_min, SD3078_Status.set_sec);
-        SD3078_SPAWN_ARGS(SD3078_Lock);
+        SD3078_SEC(&t)   = SD3078_Status.set_sec;
+        SD3078_MIN(&t)   = SD3078_Status.set_min;
+        SD3078_HOUR(&t)  = SD3078_Status.set_hour;
+        SD3078_WEEK(&t)  = SD3078_WEEK(&SD3078_Status.time_dec);   //星期不在菜单中设置，沿用当前值
+        SD3078_DAY(&t)   = SD3078_Status.set_day;
+        SD3078_MONTH(&t) = SD3078_Status.set_month;
+        SD3078_YEAR(&t)  = SD3078_Status.set_year;
+        SD3078_SPAWN_NOARG(SD3078_Unlock);
+        SD3078_SPAWN_ARGS(SD3078_TimeSetDec, &t);
+        SD3078_SPAWN_NOARG(SD3078_Lock);
         SD3078_Status.time_set_pending = 0;
     }
     SD3078_FUNC_END;
 }
 
 /******************************时间报警操作区**********************************/
-SD3078_RET SD3078_AlarmLoad(SD3078_NOARG)//读取报警镜像（07H~0EH共8字节）
+SD3078_RET SD3078_AlarmLoad(SD3078_NOARG)//读取报警镜像（07H~0EH：时间7字节 + 报警允许）
 {
+    uint8_t en;
     SD3078_FUNC_BEGIN;
     SD3078_MUTEX_TAKE;
-    SD3078_SPAWN_ARGS(SD3078_BytesRead, SD3078_STRG_ALARM_SEC, &SD3078_Status.alarm_sec, 8);
-    SD3078_Status.alarm_hour &= ~SD3078_HOUR_1224;
+    /* 时间部分复用统一时间读取（0x07~0x0D），报警允许位 0x0E 单独读 */
+    if(sd3078_time_read(SD3078_STRG_ALARM_SEC, &SD3078_Status.alarm_time) != I2C_OK
+       || SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_CTRG_ALARM_EN, &en, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
+    {
+        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮重新初始化 */
+        SD3078_MUTEX_GIVE;
+        SD3078_FUNC_END;
+    }
+    SD3078_Status.alarm_en = en;
     SD3078_MUTEX_GIVE;
     SD3078_FUNC_END;
 }
@@ -276,44 +253,25 @@ SD3078_RET SD3078_AlarmLoad(SD3078_NOARG)//读取报警镜像（07H~0EH共8字�
 /  SD3078_ALARMEN_EAD|SD3078_ALARMEN_EAMO|SD3078_ALARMEN_EAY  每年固定日期报警
 /注意：日报警与星期报警同时允许时只有日报警有效
 */
-SD3078_RET SD3078_AlarmSetBCD(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t week, uint8_t hour, uint8_t min, uint8_t sec, uint8_t en))
+SD3078_RET SD3078_AlarmSetDec(SD3078_ARGS(const sd3078_time_t *t, uint8_t en))
 {
+    uint8_t b[SD3078_TIME_FIELDS + 1U];
     SD3078_FUNC_BEGIN;
     SD3078_MUTEX_TAKE;
+    /* 报警组 = 0x07~0x0D 的 7 字节同格式时间 + 0x0E 报警允许；
+     * 时间部分复用同一套格式逻辑，只有"多了 en 这一字节写"是报警特有的。 */
+    b[0] = SD3078_DecToBcd((uint8_t)SD3078_SEC(t));
+    b[1] = SD3078_DecToBcd((uint8_t)SD3078_MIN(t));
+    b[2] = SD3078_DecToBcd((uint8_t)SD3078_HOUR(t));
 #if SD3078_24HOUR
-    hour |= SD3078_HOUR_1224;
+    b[2] |= SD3078_HOUR_1224;
 #endif
-    SD3078_Status.sendbuf[0] = sec;
-    SD3078_Status.sendbuf[1] = min;
-    SD3078_Status.sendbuf[2] = hour;
-    SD3078_Status.sendbuf[3] = week;
-    SD3078_Status.sendbuf[4] = day;
-    SD3078_Status.sendbuf[5] = month;
-    SD3078_Status.sendbuf[6] = year;
-    SD3078_Status.sendbuf[7] = en;
-    SD3078_EXEC(SD3078_I2C_Transmit(SD3078_I2C_ADDR, SD3078_STRG_ALARM_SEC, SD3078_Status.sendbuf, 8, (uint8_t*)&SD3078_Status.flag));
-    SD3078_UNTIL(SD3078_Status.flag);
-    //每一次对时间报警允许寄存器的写入都会清INTAF为"0"
-    SD3078_MUTEX_GIVE;
-    SD3078_FUNC_END;
-}
-
-SD3078_RET SD3078_AlarmSetDec(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t week, uint8_t hour, uint8_t min, uint8_t sec, uint8_t en))
-{
-    SD3078_FUNC_BEGIN;
-    SD3078_MUTEX_TAKE;
-    SD3078_Status.sendbuf[0] = SD3078_DecToBcd(sec);
-    SD3078_Status.sendbuf[1] = SD3078_DecToBcd(min);
-    SD3078_Status.sendbuf[2] = SD3078_DecToBcd(hour);
-    SD3078_Status.sendbuf[3] = week;
-    SD3078_Status.sendbuf[4] = SD3078_DecToBcd(day);
-    SD3078_Status.sendbuf[5] = SD3078_DecToBcd(month);
-    SD3078_Status.sendbuf[6] = SD3078_DecToBcd(year);
-    SD3078_Status.sendbuf[7] = en;
-#if SD3078_24HOUR
-    SD3078_Status.sendbuf[2] |= SD3078_HOUR_1224;
-#endif
-    SD3078_EXEC(SD3078_I2C_Transmit(SD3078_I2C_ADDR, SD3078_STRG_ALARM_SEC, SD3078_Status.sendbuf, 8, (uint8_t*)&SD3078_Status.flag));
+    b[3] = (uint8_t)SD3078_WEEK(t);          //星期非 BCD
+    b[4] = SD3078_DecToBcd((uint8_t)SD3078_DAY(t));
+    b[5] = SD3078_DecToBcd((uint8_t)SD3078_MONTH(t));
+    b[6] = SD3078_DecToBcd((uint8_t)SD3078_YEAR(t));
+    b[7] = en;
+    SD3078_EXEC(SD3078_I2C_Transmit(SD3078_I2C_ADDR, SD3078_STRG_ALARM_SEC, b, SD3078_TIME_FIELDS + 1U, (uint8_t*)&SD3078_Status.flag));
     SD3078_UNTIL(SD3078_Status.flag);
     //每一次对时间报警允许寄存器的写入都会清INTAF为"0"
     SD3078_MUTEX_GIVE;
@@ -342,7 +300,7 @@ SD3078_RET SD3078_TempLoad(SD3078_NOARG)//读取温度镜像（0x16）
     SD3078_MUTEX_TAKE;
     if(SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_TEMP, (uint8_t*)&t, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
     {
-        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮 load_task 重新初始化 */
         SD3078_MUTEX_GIVE;
         SD3078_FUNC_END;
     }
@@ -386,7 +344,7 @@ SD3078_RET SD3078_BattLoad(SD3078_NOARG)//读取电池电压镜像（1AH/1BH合�
     if(SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_CTR5, (uint8_t*)&ctr5, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK
        || SD3078_I2C_Receive(SD3078_I2C_ADDR, SD3078_STRG_BAT_VAL, (uint8_t*)&bval, 1, (uint8_t*)&SD3078_Status.flag) != I2C_OK)
     {
-        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败：当前由开关临时屏蔽 */
+        SD3078_MARK_OFFLINE_ON_I2C_FAIL();   /* 通信失败：清 initialized → 下轮 load_task 重新初始化 */
         SD3078_MUTEX_GIVE;
         SD3078_FUNC_END;
     }
@@ -540,6 +498,15 @@ uint8_t SD3078_ReadOSF(void)//停振标志（1=内部振荡器曾停振）
     return SD3078_Status.ctr1 & SD3078_CTR1_OSF;
 }
 
+/* 读取芯片 UID（唯一身份识别码，8 字节）。
+ * 数据来自初始化时一次性读取的镜像（0x72~0x79），不在此发起 I2C。
+ * idx: 0~7 取单字节（idx=0 为寄存器 0x72 的最高字节），越界返回 0。 */
+uint8_t SD3078_ReadID(uint8_t idx)
+{
+    if (idx >= sizeof(SD3078_Status.id)) return 0U;
+    return SD3078_Status.id[idx];
+}
+
 /*******************************初始化区***************************************/
 /*SD3078正式初始化（默认不充电 + 低功耗配置）
  * ① 充电：每次上电重置充电寄存器为「不充电」（默认）；需要充电时由上层/菜单
@@ -560,8 +527,7 @@ SD3078_RET SD3078_Init(SD3078_NOARG)
         //注意：必须在任何写操作之前读——RTCF 会在上电后第一次有效写时被芯片清零，
         //      PMF/RTCF/OSF 在此一次性快照，供 SD3078_ReadPMF/RTCF/OSF 查询
         SD3078_SPAWN_ARGS(SD3078_ByteRead, SD3078_CTRG_CTR1, &SD3078_Status.ctr1);
-        SD3078_Status.online = (SD3078_Status.ctr1 == 0xFFU) ? 0 : 1;
-        if(SD3078_Status.online)
+        if(SD3078_Status.ctr1 != 0xFFU)   //读到0xFF视为无设备/总线浮空 → 不置 initialized，下轮重试
         {
             //读取芯片ID（一次性快照）
             SD3078_SPAWN_NOARG(SD3078_IDLoad);
@@ -590,8 +556,7 @@ SD3078_RET SD3078_FullInit(SD3078_NOARG)
     SD3078_FUNC_BEGIN;
     //上电即读CTR1校验在线，并快照 PMF/RTCF/OSF（RTCF 会在首次有效写后被芯片清零，必须先读）
     SD3078_SPAWN_ARGS(SD3078_ByteRead, SD3078_CTRG_CTR1, &SD3078_Status.ctr1);
-    SD3078_Status.online = (SD3078_Status.ctr1 == 0xFFU) ? 0 : 1;//读到0xFF视为无设备（总线浮空）
-    if(SD3078_Status.online)
+    if(SD3078_Status.ctr1 != 0xFFU)//读到0xFF视为无设备（总线浮空）→ 不置 initialized，下轮重试
     {
         //读取芯片ID（一次性快照）
         SD3078_SPAWN_NOARG(SD3078_IDLoad);

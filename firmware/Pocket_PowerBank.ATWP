@@ -49,11 +49,11 @@
             <ModeSub name="I2C" value="I2C"/>
         </Mode>
         <Parameters>
-            <ParametersSub name="I2C_Mode" value="I2C_Fast"/>
-            <ParametersSub name="Digital_Filter" value="10"/>
-            <ParametersSub name="Digital_Filter_Time" value="133"/>
+            <ParametersSub name="Digital_Filter" value="15"/>
+            <ParametersSub name="Digital_Filter_Time" value="200"/>
+            <ParametersSub name="Rise_Time" value="600"/>
             <ParametersSub name="Fall_Time" value="50"/>
-            <ParametersSub name="Timing_Configuration_Value" value="0x20B00F1B"/>
+            <ParametersSub name="Timing_Configuration_Value" value="0x40E04141"/>
             <ParametersSub name="DualAddressMode" value="DISABLE"/>
         </Parameters>
     </I2C1>
@@ -399,7 +399,7 @@
         <CodeSplitIP>false</CodeSplitIP>
         <AddNecessaryFileFlag>true</AddNecessaryFileFlag>
         <MinHeapSize>0x00</MinHeapSize>
-        <MinStackSize>0x200</MinStackSize>
+        <MinStackSize>0x400</MinStackSize>
         <UseFirmware>true</UseFirmware>
         <PackageVersion>V2.0.9</PackageVersion>
     </ProjectInfomation>

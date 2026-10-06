@@ -17,16 +17,11 @@ extern C {
 //  - 已定义：协作式 API（返回类型为 char，并额外带 struct pt *pt 参数）。
 //#define SD3078_USE_PROTOTHREAD
 
-/* 器件离线判定总开关（2026-09 临时屏蔽）：I²C 读失败是否把器件判离线并触发重新初始化。
- * 置 1：不因 I²C 失败置离线（当前 PCB 布线干扰强，避免被反复重初始化）。
- * 置 0：原行为。 */
-#ifndef SD3078_I2C_FAIL_MARK_OFFLINE
-#define SD3078_I2C_FAIL_MARK_OFFLINE    1           //1=屏蔽"I²C 失败→置离线"（当前 PCB 布线整改前的临时状态）；0=恢复自动重新初始化
-#endif
-#if SD3078_I2C_FAIL_MARK_OFFLINE
-#define SD3078_MARK_OFFLINE_ON_I2C_FAIL()   do {} while(0)
-#else
-#define SD3078_MARK_OFFLINE_ON_I2C_FAIL()   do { SD3078_Status.online = 0; SD3078_Status.initialized = 0; } while(0)
+/* I²C 通信失败 → 清 initialized（不再维护 online 字段）：
+ *  - initialized=0 使 SD3078_IsInitialized() 返回 0，load_task 下一轮就会重新
+ *    SD3078_Init()（CTR1 校验通过后重新置 1），即"通信失败 → 自动重初始化"。 */
+#ifndef SD3078_MARK_OFFLINE_ON_I2C_FAIL
+#define SD3078_MARK_OFFLINE_ON_I2C_FAIL()   do { SD3078_Status.initialized = 0; } while(0)
 #endif
 
 /*包含自己的I2C驱动库*/
@@ -86,41 +81,56 @@ extern C {
     #define SD3078_MUTEX_GIVE   xSemaphoreGive(mutex_i2c_handle)
 #endif    
 
+/* ==================== 统一时间结构体 ====================
+ * 参考 NUEDC framework 的 time.c/.h（统一时间结构体，避免各驱动各写一套 set/get）：
+ *  - 字段顺序统一为「秒 分 时 周 日 月 年」，正好等于 SD3078 四组时间寄存器
+ *    的物理顺序，因此同一套收发函数可服务全部四组：
+ *      0x00~0x06  RTC 时间
+ *      0x07~0x0D  报警时间（0x0E 报警允许另放，不在本结构体内）
+ *      0x20~0x26  历史最低温发生时间
+ *      0x27~0x2D  历史最高温发生时间
+ *  - 收发走字节池 b[]，用下面的 SEC/MIN/... 宏逐字节取用（不依赖编译器字节序、
+ *    不用匿名 union 的类型双关），字段顺序仍只在这一处定义。 */
+#define SD3078_TIME_FIELDS  7
+
+/* 全部字段都是 uint8_t 且按寄存器顺序排列，因此结构体恰好 7 字节、无填充、
+ * 对齐为 1，既可 memcpy，也可用下面的宏按固定下标当 b[] 用。 */
+typedef struct {
+    uint8_t sec;
+    uint8_t min;
+    uint8_t hour;
+    uint8_t week;
+    uint8_t day;
+    uint8_t month;
+    uint8_t year;
+} sd3078_time_t;
+
+/* 按寄存器顺序取字段（0=秒 … 6=年）：b[] 视图。
+ * 统一转成 uint8_t* 再按固定下标取，故调用点传值（SD3078_Status.time_dec）
+ * 和传指针（函数内的 sd3078_time_t *t、&t）都是同一写法。 */
+#define SD3078_TIME_B(t)      ((uint8_t *)(t))
+#define SD3078_SEC(t)         (SD3078_TIME_B(t)[0])
+#define SD3078_MIN(t)         (SD3078_TIME_B(t)[1])
+#define SD3078_HOUR(t)        (SD3078_TIME_B(t)[2])
+#define SD3078_WEEK(t)        (SD3078_TIME_B(t)[3])
+#define SD3078_DAY(t)         (SD3078_TIME_B(t)[4])
+#define SD3078_MONTH(t)       (SD3078_TIME_B(t)[5])
+#define SD3078_YEAR(t)        (SD3078_TIME_B(t)[6])
+
 struct SD3078_StatusTypedef
 {
-    uint8_t online;                                                             //SD3078连接成功，表现为有设备响应I2C地址
-    uint8_t initialized;                                                        //SD3078已初始化
+    uint8_t initialized;                                                        //SD3078已初始化（CTR1 校验通过）；通信失败时清 0 触发重新初始化
     uint8_t unlocked;                                                           //SD3078已解锁（WRTC1/2/3=1），此时寄存器可写
     uint8_t flag;                                                               //标识传输完成与传输状态用变量
     uint8_t sendbuf[8];                                                         //传输缓冲用变量
     
 /***************************寄存器内存镜像声明*********************************/
-    //实时时钟数据区（原始BCD镜像，保留寄存器原值）
-    uint8_t sec;                    //0x00 秒（BCD）
-    uint8_t min;                    //0x01 分钟（BCD）
-    uint8_t hour;                   //0x02 小时（BCD，含12_/24制式位，TimeLoad后已屏蔽）
-    uint8_t week;                   //0x03 星期（0~6，0=星期日）
-    uint8_t day;                    //0x04 日（BCD）
-    uint8_t month;                  //0x05 月（BCD）
-    uint8_t year;                   //0x06 年（BCD，00~99）
+    /* 时间：统一结构体，BCD/十进制两套镜像由 sd3078_time_read/write 统一维护 */
+    sd3078_time_t time;             //0x00~0x06 实时时钟（BCD 原始值）
+    sd3078_time_t time_dec;         //0x00~0x06 实时时钟（十进制镜像，供 SD3078_Read*() 返回）
 
-    //实时时钟十进制镜像（TimeLoad时由BCD转换，供SD3078_Read*()直接返回）
-    uint8_t sec_dec;                //秒（十进制）
-    uint8_t min_dec;                //分钟（十进制）
-    uint8_t hour_dec;               //小时（十进制）
-    uint8_t week_dec;               //星期（十进制，0~6，0=星期日）
-    uint8_t day_dec;                //日（十进制）
-    uint8_t month_dec;              //月（十进制）
-    uint8_t year_dec;               //年（十进制，0~99）
-
-    //时间报警寄存器镜像（BCD码）
-    uint8_t alarm_sec;              //0x07 秒报警
-    uint8_t alarm_min;              //0x08 分钟报警
-    uint8_t alarm_hour;             //0x09 小时报警
-    uint8_t alarm_week;             //0x0A 星期报警
-    uint8_t alarm_day;              //0x0B 日报警
-    uint8_t alarm_month;            //0x0C 月报警
-    uint8_t alarm_year;             //0x0D 年报警
+    //时间报警镜像（0x07~0x0D 用统一时间结构体，0x0E 报警允许单独放）
+    sd3078_time_t alarm_time;       //0x07~0x0D 报警时间（BCD 原始值）
     uint8_t alarm_en;               //0x0E 报警允许
 
     //控制寄存器存档
@@ -347,15 +357,13 @@ uint8_t SD3078_ReadMonthBCD(void);             //读取月（原始BCD镜像）
 uint8_t SD3078_ReadYearBCD(void);              //读取年（原始BCD镜像）
 uint8_t SD3078_BcdToDec(uint8_t bcd);          //BCD → 十进制（时间/日期寄存器为 BCD 码）
 uint8_t SD3078_DecToBcd(uint8_t dec);          //十进制 → BCD（时间/日期寄存器为 BCD 码）
-SD3078_RET SD3078_TimeSetBCD(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t week, uint8_t hour, uint8_t min, uint8_t sec));//一次性写7字节时间（BCD 输入）
-SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t week, uint8_t hour, uint8_t min, uint8_t sec));//一次性写7字节时间（二进制/十进制输入）
+SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(const sd3078_time_t *t));//一次性写7字节时间（t 传十进制值，内部转 BCD 并处理 12_/24 位）
 SD3078_RET SD3078_RequestTimeSet(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min, uint8_t sec));//请求设置时间（十进制输入，写句柄待 load_task 提交）
 SD3078_RET SD3078_TimeSetProcess(SD3078_NOARG);    //检测并提交时间设置请求（load_task 0.5s 周期调用）
 
 //时间报警操作
-SD3078_RET SD3078_AlarmLoad(SD3078_NOARG);     //读取报警镜像（07H~0EH共8字节）
-SD3078_RET SD3078_AlarmSetBCD(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t week, uint8_t hour, uint8_t min, uint8_t sec, uint8_t en));//设置报警（BCD 输入，en为报警允许位）
-SD3078_RET SD3078_AlarmSetDec(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t week, uint8_t hour, uint8_t min, uint8_t sec, uint8_t en));//设置报警（二进制/十进制输入，en为报警允许位）
+SD3078_RET SD3078_AlarmLoad(SD3078_NOARG);     //读取报警镜像（0x07~0x0D 时间 + 0x0E 报警允许）
+SD3078_RET SD3078_AlarmSetDec(SD3078_ARGS(const sd3078_time_t *t, uint8_t en));//设置报警（t 传十进制值，en 为报警允许位）
 SD3078_RET SD3078_AlarmClear(SD3078_NOARG);    //清除报警中断标志（INTAF写0）
 uint8_t SD3078_HasAlarm(void);                 //查询报警中断标志（INTAF）
 
@@ -389,6 +397,7 @@ SD3078_RET SD3078_F32KSet(SD3078_ARGS(uint8_t enable));//32K输出控制（1=允
 SD3078_RET SD3078_SramWrite(SD3078_ARGS(uint8_t offset, uint8_t *pdata, uint16_t len));//写用户RAM（offset 0~69）
 SD3078_RET SD3078_SramRead(SD3078_ARGS(uint8_t offset, uint8_t *pdata, uint16_t len));//读用户RAM
 SD3078_RET SD3078_IDLoad(SD3078_NOARG);        //读取芯片ID（72H~79H共8字节）
+uint8_t SD3078_ReadID(uint8_t idx);            //读取芯片UID单字节（idx 0~7，取初始化时读到的镜像，不发 I2C）
 
 //初始化
 SD3078_RET SD3078_Init(SD3078_NOARG);          //正式初始化（上电即调用一次：在线校验+ID/PMF/RTCF/OSF快照+默认不充电+低功耗），自带initialized判断

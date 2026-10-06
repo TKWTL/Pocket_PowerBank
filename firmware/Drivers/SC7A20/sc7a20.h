@@ -18,16 +18,13 @@ extern C {
 //  - 已定义：协作式 API（返回类型为 char，并额外带 struct pt *pt 参数）。
 //#define SC7A20_USE_PROTOTHREAD
 
-/* 器件离线判定总开关（2026-09 临时屏蔽）：I²C 读失败是否把器件判离线并触发重新初始化。
- * 置 1：不因 I²C 失败置离线（当前 PCB 布线干扰强，避免被反复重初始化）。
- * 置 0：原行为。 */
-#ifndef SC7A20_I2C_FAIL_MARK_OFFLINE
-#define SC7A20_I2C_FAIL_MARK_OFFLINE    1           //1=屏蔽"I²C 失败→置离线"（当前 PCB 布线整改前的临时状态）；0=恢复自动重新初始化
-#endif
-#if SC7A20_I2C_FAIL_MARK_OFFLINE
-#define SC7A20_MARK_OFFLINE_ON_I2C_FAIL()   do {} while(0)
-#else
-#define SC7A20_MARK_OFFLINE_ON_I2C_FAIL()   do { SC7A20_Status.online = 0; SC7A20_Status.initialized = 0; } while(0)
+/* I²C 通信失败 → 清 initialized（不再维护 online 字段）：
+ *  - initialized=0 使 SC7A20_IsInitialized() 返回 0，load_task 下一轮就会重新
+ *    SC7A20_Init()（WHO_AM_I 校验通过后重新置 1），即"通信失败 → 自动重初始化"；
+ *  - 驱动内原有的 online 守卫改为 initialized 守卫，语义由"是否通信过"统一为"是否可用"。 */
+#ifndef SC7A20_MARK_OFFLINE_ON_I2C_FAIL
+#define SC7A20_MARK_OFFLINE_ON_I2C_FAIL() \
+    do { SC7A20_Status.initialized = 0; SC7A20_Status.last_error = SC7A20_ERR_NOT_ONLINE; } while(0)
 #endif
 
 /*包含自己的I2C驱动库*/
@@ -138,8 +135,7 @@ typedef struct {
 
 struct SC7A20_StatusTypedef
 {
-    uint8_t online;                                                             //SC7A20连接成功，表现为WHO_AM_I校验通过
-    uint8_t initialized;                                                        //SC7A20已初始化
+    uint8_t initialized;            //SC7A20已初始化（WHO_AM_I 校验通过并完成配置）；通信失败时清 0 触发重新初始化
     uint8_t flag;                                                               //标识传输完成与传输状态用变量
     uint8_t sendbuf[8];                                                         //传输缓冲用变量
     
@@ -434,8 +430,7 @@ SC7A20_RET SC7A20_LowPowerSet(SC7A20_NOARG);   //仅修正INT极性并置于Powe
 
 //初始化
 SC7A20_RET SC7A20_Init(SC7A20_NOARG);          //初始化，最好系统上电后立刻执行
-uint8_t SC7A20_IsInitialized(void);             //检测SC7A20是否已初始化过
-uint8_t SC7A20_IsOnline(void);                  //检测SC7A20是否在线（WHO_AM_I校验）
+uint8_t SC7A20_IsInitialized(void);             //检测SC7A20是否已初始化过（通信失败时会返回 0）
 
 //错误查询
 uint8_t SC7A20_GetLastError(void);              //读取最近一次配置/使能操作错误码（sc7a20_err_t）

@@ -79,20 +79,19 @@ SD3078_RET SD3078_Unlock(SD3078_NOARG)
 */
 SD3078_RET SD3078_Lock(SD3078_NOARG)
 {
-    i2c_status_type st;
+    i2c_status_type st1;
     i2c_status_type st2;
 
     SD3078_MUTEX_TAKE;
-    st = SD3078_ByteModify(SD3078_CTRG_CTR1,
-                           SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2, 0x00U);
+    st1 = SD3078_ByteModify(SD3078_CTRG_CTR1,
+                            SD3078_CTR1_WRTC3 | SD3078_CTR1_WRTC2, 0x00U);
     /* 即使第一步失败也尝试清 WRTC1，尽最大可能关闭写窗口。 */
     st2 = SD3078_ByteModify(SD3078_CTRG_CTR2, SD3078_CTR2_WRTC1, 0x00U);
-    if (st == I2C_OK) st = st2;
 
-    /* 任意一组允许位被清掉后芯片已不可写；软件状态按“锁定”处理。 */
-    if (st2 == I2C_OK || st == I2C_OK) SD3078_Status.unlocked = 0U;
+    /* 三个位必须全为1才允许写；任一步成功清零后都已回到不可写状态。 */
+    if (st1 == I2C_OK || st2 == I2C_OK) SD3078_Status.unlocked = 0U;
     SD3078_MUTEX_GIVE;
-    return st;
+    return (st1 != I2C_OK) ? st1 : st2;
 }
 
 /* ==================== RTC 时间格式收发 ====================

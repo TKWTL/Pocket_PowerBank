@@ -10,6 +10,7 @@ extern "C" {
 #include "bsp_usart.h"                  /* USART 打印输出（printf 调试用） */
 #include "framework/pm_api.h"           /* PM 框架 API（休眠控制接口） */
 #include "framework/pm_sleep_timer.h"   /* 休眠定时器（获取剩余时间等） */
+#include "framework/nvm_store.h"       /* SD3078 Backup RAM NVM */
 
 /* ===== 外设驱动头文件 =====
  * 统一包含头 drivers.h：增删外部功能芯片时只改 Drivers/drivers.h 即可移植。

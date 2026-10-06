@@ -618,7 +618,9 @@ void menu_status_refresh(void)
     }
 
     /* ---- Timer：时分秒、年月日、温度、备用电池电压、UID（读 SD3078 驱动句柄镜像） ---- */
-    if (SD3078_IsInitialized()) {
+    if (SD3078_ReadMonth() >= 1U && SD3078_ReadMonth() <= 12U &&
+        SD3078_ReadDay() >= 1U && SD3078_ReadDay() <= 31U &&
+        SD3078_ReadHour() <= 23U && SD3078_ReadMin() <= 59U && SD3078_ReadSec() <= 59U) {
         snprintf(menu_status_time, sizeof(menu_status_time), menu_tr("status.time"),
                  SD3078_ReadHour(), SD3078_ReadMin(), SD3078_ReadSec());
         snprintf(menu_status_date, sizeof(menu_status_date), menu_tr("status.date"),
@@ -627,7 +629,6 @@ void menu_status_refresh(void)
                  (int)SD3078_ReadTemp());
         snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), menu_tr("status.vbackup"),
                  SD3078_ReadBatt() / 1000.0f);
-        /* UID：0x72~0x79 共 8 字节 → 16 个十六进制字符，无前缀后缀 */
         snprintf(menu_status_uid, sizeof(menu_status_uid), "%02X%02X%02X%02X%02X%02X%02X%02X",
                  SD3078_ReadID(0), SD3078_ReadID(1), SD3078_ReadID(2), SD3078_ReadID(3),
                  SD3078_ReadID(4), SD3078_ReadID(5), SD3078_ReadID(6), SD3078_ReadID(7));

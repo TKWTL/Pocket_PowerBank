@@ -32,6 +32,11 @@
 
 #define BYTE_PER_PIXEL (LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565_SWAPPED)) /*will be 2 for RGB565 */
 
+/* 写屏时比窗口多送的 2 个像素（4 字节）：位于窗口右下角之外，不承载图像内容，
+ * 由 disp_fill_ramwr_tail() 固定填 0x10，不发送缓冲区残留的随机值。 */
+#define GC9D01_RAMWR_TAIL_BYTES     4U
+#define GC9D01_RAMWR_TAIL_FILL      0x10U
+
 /**********************
  *      TYPEDEFS
  **********************/
@@ -47,9 +52,8 @@ static void disp_flush(lv_display_t * disp, const lv_area_t * area, uint8_t * px
  *  STATIC VARIABLES
  **********************/
 /* LVGL 渲染缓冲：160×16×2 = 5120B（RGB565，可容纳 160×16 行；≤6K，缓解移动边界残留）。
- * +8B 尾随余量：GC9D01 写屏实测需比窗口 w*h 多 2 像素（4B），给 px_map 越界读留安全空间。
- * 放文件作用域，初始化清屏时也复用这块缓冲。 */
-static uint8_t fb[MY_DISP_HOR_RES * 16 * 2 + 8];
+ * 尾部余量精确等于 GC9D01_RAMWR_TAIL_BYTES（4B），刚好容纳多送的 2 像素，不多留。 */
+static uint8_t fb[MY_DISP_HOR_RES * 16 * 2 + GC9D01_RAMWR_TAIL_BYTES];
 
 /**********************
  *      MACROS
@@ -73,7 +77,8 @@ void lv_port_disp_init(void)
     lv_display_set_flush_cb(disp, disp_flush);
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565_SWAPPED);
     
-    /* Full-screen single buffer（fb 在文件作用域定义，5120B 不含尾随余量） */
+    /* Full-screen single buffer（fb 在文件作用域定义；此处只把 5120B 交给 LVGL，
+       尾部 4B 余量不纳入缓冲区尺寸，留给 RAMWR 多送的 2 像素） */
     LV_ATTRIBUTE_MEM_ALIGN
     lv_display_set_buffers(disp,
                            fb,                // buf1: full screen
@@ -86,20 +91,15 @@ void lv_port_disp_init(void)
  *   STATIC FUNCTIONS
  **********************/
 
-/* GC9D01 上电时整片 RAM 是随机值，而 LVGL 只刷新被标记失效的区域：
- * 面板上从未被刷到的位置（如右边界中段、右下角）会一直显示上电白点/垃圾。
- * 这里初始化时全屏清黑一次，消除所有残留。
- * 注意：160×40×2 = 12.8KB 无法一次静态缓冲，用 5120B 缓冲分 3 段清（16/16/8 行）。 */
-static void disp_clear_screen(void)
+/* 填充 RAMWR 多送 2 像素用的 4 字节尾部填充值。
+ * 缓冲区尾部余量正好只有这 4B，若 px_map 不是缓冲区首地址，调用方需自行保证尾部有余量。 */
+static void disp_fill_ramwr_tail(uint8_t * px_map, uint32_t px_cnt)
 {
-    uint16_t r, h;
+    uint8_t * tail = px_map + px_cnt;
+    uint32_t i;
 
-    for (r = 0; r < MY_DISP_VER_RES; r += 16) {
-        h = (MY_DISP_VER_RES - r < 16) ? (MY_DISP_VER_RES - r) : 16;
-        memset(fb, 0, sizeof(fb));
-        GC9D01_SetWindow(0, r, MY_DISP_HOR_RES - 1, r + h - 1);
-        /* 与 disp_flush 一致：多写 2 像素（+4 字节），确保窗口右下角写满，不留上电残留 */
-        GC9D01_RamWrite(fb, h * MY_DISP_HOR_RES * 2 + 4);
+    for (i = 0; i < GC9D01_RAMWR_TAIL_BYTES; i++) {
+        tail[i] = (uint8_t)GC9D01_RAMWR_TAIL_FILL;
     }
 }
 
@@ -108,7 +108,6 @@ static void disp_init(void)
 {
     GC9D01_Init();
     //GC9D01_rotation(1);
-    disp_clear_screen();
 }
 
 volatile bool disp_flush_enabled = true;
@@ -147,15 +146,16 @@ static void disp_flush(lv_display_t * disp_drv, const lv_area_t * area, uint8_t 
      * DMA 尾部与传输丢失——是模组/芯片固有特性（非法负偏移的未定义行为）。
      * 多写 2 像素落在窗口末尾：右边界贴屏缘(x2=159)时落在面板外无影响。
      * 若局部刷新(右边界在屏内)出现毛边，需改按 x2==159 条件 +4。
-     * fb 已加 8B 尾随余量，px_map 读取不会越界。 */
+     * 这 4 字节由 disp_fill_ramwr_tail() 显式填 0x10；缓冲区尾部余量正好是 4B。 */
     uint32_t px_cnt = w * h * 2;
 
     /* 3) 设置窗口 + 连续写入像素流 */
     GC9D01_SetWindow((uint16_t)area->x1, (uint16_t)area->y1, (uint16_t)area->x2, (uint16_t)area->y2);
 
-    /* px_map 是 LVGL 提供的像素块起始地址；
-       RGB565 时每像素 2 字节，所以直接当 uint16_t* 用 */
-    GC9D01_RamWrite(px_map, px_cnt + 4);
+    /* px_map 是 LVGL 提供的像素块起始地址（lv_refr.c 传的是缓冲区首地址）；
+       RGB565 时每像素 2 字节；多送的 2 像素显式填 0x10，不读缓冲区残留 */
+    disp_fill_ramwr_tail(px_map, px_cnt);
+    GC9D01_RamWrite(px_map, px_cnt + GC9D01_RAMWR_TAIL_BYTES);
     
     lv_display_flush_ready(disp_drv);
 }

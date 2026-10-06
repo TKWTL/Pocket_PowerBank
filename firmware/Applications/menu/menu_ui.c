@@ -9,6 +9,9 @@
  * 注意：
  *  - 菜单屏背景必须显式 bg_opa=COVER（默认透明），否则旧屏像素透出叠加成乱码；
  *  - 不能用 style translate_x 做滑动动画（不带 EXT_DRAW_UPDATE，旧位置不无效化会留残影）。
+ *
+ * 参考来源：滑动切换与 PID 动画参数参考 MiaoUI 的 UI_Animation
+ * （https://github.com/JFeng-Z/MiaoUI）；菜单框架整体借用点见 menu.h 文件头"参考来源"。
  */
 #include <stdio.h>
 #include <string.h>
@@ -574,10 +577,10 @@ static void slide_finish(void)
 #define ICON_TOP_Y         0        /* 顶部文字条 y（12px 字体顶格） */
 /* 高亮图标中心允许活动的水平范围。
  * 图标不再绑定固定屏幕槽位：打开时选中项中心位于 x=80；
- * 随 NEXT/PREV 自由移动，只在中心越过 [40,120] 时让整条图标带做“最小必要位移”，
+ * 随 NEXT/PREV 自由移动，只在中心越过 [60,110] 时让整条图标带做“最小必要位移”，
  * 因此多数按键只移动高亮，不滚动整条图标带。 */
-#define ICON_LEFT_LIMIT     40
-#define ICON_RIGHT_LIMIT   120
+#define ICON_LEFT_LIMIT     60
+#define ICON_RIGHT_LIMIT   110
 
 /* 图标对象（每个图标一个：透明度 PID 动画；尺寸用双位图 src 切换，不走 scale transform） */
 typedef struct {

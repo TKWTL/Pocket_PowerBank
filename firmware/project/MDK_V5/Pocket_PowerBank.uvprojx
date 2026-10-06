@@ -2719,6 +2719,11 @@
               <FilePath>..\..\Applications\framework\pm_policy.c</FilePath>
             </File>
             <File>
+              <FileName>nvm_store.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\framework\nvm_store.c</FilePath>
+            </File>
+            <File>
               <FileName>pm_sleep_timer.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\Applications\framework\pm_sleep_timer.c</FilePath>

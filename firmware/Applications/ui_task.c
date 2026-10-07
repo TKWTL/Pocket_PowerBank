@@ -62,9 +62,10 @@ static void menu_redraw_handler(void)
     menu_ui_redraw();
 }
 
-/* 屏幕方向 = 重力方向 XOR Display Flip 开关。
- * 开关（Settings→Display→Display Flip）用于"设备装反/想固定另一边"时把方向反过来；
- * 混合方向未知时保持上一次的旋转，避免上电瞬间闪一下。 */
+/* 屏幕方向 = 重力方向 AND Auto Flip 开关。
+ * Auto Flip（Settings→Display→Auto Flip）默认 ON：跟随重力自动翻转；
+ * 关掉则固定方向（画面永远正立，不随摆放转动）。
+ * 方向未知时保持上一次的旋转，避免上电瞬间闪一下。 */
 static void ui_auto_rotate(void)
 {
     static uint8_t applied_valid = 0;
@@ -75,9 +76,9 @@ static void ui_auto_rotate(void)
     if (orientation == SC7A20_ORIENT_UNKNOWN) {
         return;
     }
-    /* 重力方向 XOR 开关：开关为 ON 时，NORMAL 也按翻转显示 */
-    flipped = (uint8_t)((orientation == SC7A20_ORIENT_FLIPPED) ^
-                        (menu_display_get_flip() != 0U));
+    /* 只有开关为 ON 时才跟随重力；OFF 时恒为正立方向 */
+    flipped = (uint8_t)((menu_auto_flip_get() != 0U) &&
+                        (orientation == SC7A20_ORIENT_FLIPPED));
 
     if (applied_valid && flipped == applied_flipped) {
         return;
@@ -119,11 +120,13 @@ static app_action_t key_event(KeyIndex_t k, app_action_t single, app_action_t db
 static app_action_t ui_scan_action(void)
 {
     /* 菜单态：仅单击（导航/确认），双击/长按不进菜单。
-     * 显示翻转（Settings→Display→Display Flip）后画面 180°，按键在视觉上左右对调：
+     * Auto Flip 开着时画面会跟随重力倒过来，此时按键在视觉上左右对调：
      * 菜单里把 PREV/NEXT 互换，让"屏幕上左/上那个键"仍然是上一项。
-     * 只换菜单态：应用态（主界面等）的 MENU/NEXT 语义是 HOME/LED，与屏幕方向无关。 */
+     * 只在"当前画面确实倒着"时换 —— 关闭 Auto Flip 时固定正立，无需互换。
+     * 应用态（主界面等）的 MENU/NEXT 语义是 HOME/LED，与屏幕方向无关，一律不换。 */
     if (menu_is_active()) {
-        uint8_t flip = (menu_display_get_flip() != 0U);
+        uint8_t flip = (menu_auto_flip_get() != 0U) &&
+                       (SC7A20_AlgoGetOrientation() == SC7A20_ORIENT_FLIPPED);
         if (KEY_GetDASClick(KeyIndex_MENU)) {
             KEY_ClearEdge(KeyIndex_MENU);
             return flip ? APP_ACTION_DOWN : APP_ACTION_UP;

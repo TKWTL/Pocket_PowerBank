@@ -394,52 +394,21 @@ static void main_screen_destroy(void)
  * 未来规划：双击开关最长2h的小电流模式。 */
 void main_screen_run(app_action_t action)
 {
-    static uint8_t s_wled_on = 0;       /* WLED 开关状态 */
-    static int8_t  s_wled_dir = -1;     /* 调光方向：+1 增亮 / -1 减亮；默认减（变暗），长按结束切换，始终存储 */
-    static uint8_t s_dim_div = 0;       /* 调光分频：每 8 次长按重复调一级（UI 侧限速；
-                                         * 驱动侧另有 WLED_RAMP_TICKS 的 PWM 渐变时长，两者叠加） */
+    static int8_t  s_wled_dir = -1;     /* 调光方向：+1 增亮 / -1 减亮；默认减（变暗），长按结束切换 */
+    static uint8_t s_dim_div = 0;        /* 每 8 次长按重复发一个 ±1 档请求 */
 
     switch (action) {
     case APP_ACTION_UP:      /* MENU 键：打开菜单（主界面销毁释放内存） */
         main_screen_destroy();
         menu_open();
         break;
-    case APP_ACTION_ENTER_DBL:   /* CONF 双击：开关 WLED */
-        /* 状态同步：灯被保护强制关闭时 UI 开关状态归 0，保护解除后一次双击即可重新点亮 */
-        if (WLED_IsProtectedOff()) {
-            s_wled_on = 0;
-        }
-        if (s_wled_on) {
-            WLED_Off();
-            s_wled_on = 0;
-        } else {
-            /* 先开供电通路再开灯：假插入 A1 启动 SW6306 DCDC，使 WLED 电流经库仑计计入。
-             * 这里立即插（不等 load_task 的 500ms 轮询），并把 WLED 渐变闸门关掉——
-             * 由 load_task 下一轮确认 A1 在位后放行，保证"先 A1 后 PWM"的时序。
-             * 条件与 load_task 的 wled_soc_manage 对齐：充电中或真实口占用时不假插（让位）。 */
-            WLED_SetPowerPath(0);
-            if (!SW6306_IsPortC1ON() && !SW6306_IsCharging()) {
-                SW6306_PortA1Insert();
-            }
-            WLED_On();   /* 开灯（恢复上次亮度，无则亮度中点） */
-            s_wled_on = 1;
-        }
+    case APP_ACTION_ENTER_DBL:   /* CONF 双击：只提交 WLED 开关请求 */
+        WLED_AlgoRequestToggle();
         break;
-    case APP_ACTION_ENTER_HOLD:  /* CONF 长按：持续调光（分频后步进 1，方向 s_wled_dir） */
-        {
-            if (++s_dim_div >= 8) {
-                uint16_t lvl;
-                int32_t nl;
-                s_dim_div = 0;
-                lvl = WLED_GetBrightness();
-                nl = (int32_t)lvl + (int32_t)s_wled_dir * 1;
-                /* 钳位到 [WLED_BRIGHTNESS_MIN, WLED_BRIGHTNESS_MAX]：
-                 * 下端 PWM 16（4²）不灭灯，便于确认灯状态；上端不超最大亮度 */
-                if (nl > WLED_BRIGHTNESS_MAX) nl = WLED_BRIGHTNESS_MAX;
-                if (nl < WLED_BRIGHTNESS_MIN) nl = WLED_BRIGHTNESS_MIN;
-                WLED_SetBrightness((uint16_t)nl);
-                s_wled_on = 1;   /* 调光即开灯 */
-            }
+    case APP_ACTION_ENTER_HOLD:  /* CONF 长按：持续调光；UI 只提交 ±1 档请求 */
+        if (++s_dim_div >= 8) {
+            s_dim_div = 0;
+            WLED_AlgoRequestBrightnessStep(s_wled_dir);
         }
         break;
     case APP_ACTION_ENTER_HOLD_END:  /* CONF 长按结束：切换调光方向（下次长按反向） */

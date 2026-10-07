@@ -14,6 +14,7 @@ extern "C" {
 #include "algorithm/sd3078_algo.h"      /* RTC提交 + MS621FE 后备电池策略 */
 #include "algorithm/sw6306_algo.h"      /* SW6306 配置命令 + SOH/EFC */
 #include "algorithm/sc7a20_algo.h"      /* 重力方向/旋转判定 */
+#include "algorithm/wled_algo.h"         /* WLED亮度/温控/渐变/计量通路策略 */
 
 /* ===== 外设驱动头文件 =====
  * Driver 只负责器件寄存器/镜像；algorithm 层负责业务状态机。

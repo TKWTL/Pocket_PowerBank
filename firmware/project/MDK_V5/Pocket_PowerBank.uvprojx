@@ -2748,6 +2748,11 @@
               <FileType>1</FileType>
               <FilePath>..\..\Applications\algorithm\sc7a20_algo.c</FilePath>
             </File>
+            <File>
+              <FileName>wled_algo.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\algorithm\wled_algo.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

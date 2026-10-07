@@ -567,12 +567,6 @@ MENU_PAGE_("Status", menu_page_status, menu_items_status);
  * 对未初始化的芯片输出占位符，避免 I2C 空访问（SD3078/SC7A20 未初始化时勿读）。 */
 void menu_status_refresh(void)
 {
-    /* Time 设置页非编辑状态持续跟随 load_task 的最新 RTC 镜像，
-     * 避免长时间停留页面后从进入页时的旧值开始编辑。 */
-    if (menu_current_page() == &menu_page_time && !menu_get_state()->editing) {
-        menu_time_read();
-    }
-
     /* ---- Battery：电压/电流、最大容量、当前容量、健康度、学习状态 ---- */
     if (SW6306_IsInitialized()) {
         /* 容量/库仑计镜像由 SW6306_task 周期更新（CapacityLoad），UI 只读镜像，勿在此 load */

@@ -1,23 +1,26 @@
 /*
- * nvm_store.c - minimal persistent store on SD3078 70-byte Backup RAM
+ * nvm_store.c - persistent store on SD3078 70-byte Backup RAM
  *
  * Layout (offset relative to SD3078 RAM 0x2C):
  *   0x00..0x03  factory_capacity_wh
- *   0x04..0x07  discharge_energy_wh
+ *   0x04..0x07  equivalent_cycles
  *   0x08..0x0B  shunt_mohm
- *   0x0C..0x43  reserved (56B)
+ *   0x0C        backup_charge_mode
+ *   0x0D..0x43  reserved (55B)
  *   0x44..0x45  CRC16-CCITT over payload[0..67], seeded by build magic
  */
 #include "nvm_store.h"
 #include "sd3078.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <string.h>
 
 #define NVM_OFF_FACTORY_CAPACITY_WH   0U
-#define NVM_OFF_DISCHARGE_ENERGY_WH   4U
+#define NVM_OFF_EQUIVALENT_CYCLES     4U
 #define NVM_OFF_SHUNT_MOHM            8U
+#define NVM_OFF_BACKUP_CHARGE_MODE   12U
 
-/* 存储格式明确绑定 32-bit IEEE754 float / 16-bit int16_t。
- * 用 typedef 断言兼容当前 ARMCLANG C 方言，不依赖 _Static_assert 开关。 */
+/* 存储格式明确绑定 32-bit IEEE754 float / 16-bit int16_t。 */
 typedef char nvm_float_must_be_4_bytes[(sizeof(float) == 4U) ? 1 : -1];
 typedef char nvm_i16_must_be_2_bytes[(sizeof(int16_t) == 2U) ? 1 : -1];
 typedef char nvm_layout_must_fill_sd3078[
@@ -27,6 +30,7 @@ typedef char nvm_layout_must_fill_sd3078[
 nvm_values_t nvm_data;
 
 static uint8_t s_nvm_valid;
+static volatile uint8_t s_nvm_dirty;
 
 static uint16_t nvm_crc16(const uint8_t *data, uint16_t len, uint16_t seed)
 {
@@ -48,8 +52,6 @@ uint16_t nvm_build_magic(void)
 #ifdef NVM_FIXED_MAGIC
     return (uint16_t)NVM_FIXED_MAGIC;
 #else
-    /* 原型阶段：用编译时间字符串做轻量混合，达到“每次完整编译换 magic”的目的。
-     * 它不是随机数发生器，也不用于安全用途。 */
     static const char build_id[] = __DATE__ " " __TIME__;
     uint16_t h = 0xA5C3U;
     uint16_t i;
@@ -99,29 +101,43 @@ int16_t nvm_unpack_i16(const uint8_t in[2])
 
 static uint8_t nvm_float_in_range(float v, float lo, float hi)
 {
-    /* v==v 用来拒绝 NaN；范围判断同时拒绝 +/-Inf。 */
-    return (v == v && v >= lo && v <= hi) ? 1U : 0U;
+    return (v == v && v >= lo && v <= hi) ? 1U : 0U; /* v==v rejects NaN */
 }
 
 static uint8_t nvm_values_valid(const nvm_values_t *v)
 {
     if (!nvm_float_in_range(v->factory_capacity_wh, 1.0f, 200.0f)) return 0U;
-    if (!nvm_float_in_range(v->discharge_energy_wh, 0.0f, 10000000.0f)) return 0U;
+    if (!nvm_float_in_range(v->equivalent_cycles, 0.0f, 1000000.0f)) return 0U;
     if (!nvm_float_in_range(v->shunt_mohm, 0.1f, 20.0f)) return 0U;
+    if (v->backup_charge_mode > 2U) return 0U;
     return 1U;
 }
 
 void nvm_reset_defaults(void)
 {
+    taskENTER_CRITICAL();
     nvm_data.factory_capacity_wh = NVM_DEFAULT_FACTORY_CAPACITY_WH;
-    nvm_data.discharge_energy_wh = NVM_DEFAULT_DISCHARGE_ENERGY_WH;
+    nvm_data.equivalent_cycles = NVM_DEFAULT_EQUIVALENT_CYCLES;
     nvm_data.shunt_mohm = NVM_DEFAULT_SHUNT_MOHM;
+    nvm_data.backup_charge_mode = NVM_DEFAULT_BACKUP_CHARGE_MODE;
     s_nvm_valid = 0U;
+    s_nvm_dirty = 0U;
+    taskEXIT_CRITICAL();
 }
 
 uint8_t nvm_is_valid(void)
 {
     return s_nvm_valid;
+}
+
+void nvm_request_save(void)
+{
+    s_nvm_dirty = 1U;
+}
+
+uint8_t nvm_is_dirty(void)
+{
+    return s_nvm_dirty;
 }
 
 i2c_status_type nvm_load(void)
@@ -148,16 +164,20 @@ i2c_status_type nvm_load(void)
     }
 
     tmp.factory_capacity_wh = nvm_unpack_float(&block[NVM_OFF_FACTORY_CAPACITY_WH]);
-    tmp.discharge_energy_wh = nvm_unpack_float(&block[NVM_OFF_DISCHARGE_ENERGY_WH]);
+    tmp.equivalent_cycles = nvm_unpack_float(&block[NVM_OFF_EQUIVALENT_CYCLES]);
     tmp.shunt_mohm = nvm_unpack_float(&block[NVM_OFF_SHUNT_MOHM]);
+    tmp.backup_charge_mode = block[NVM_OFF_BACKUP_CHARGE_MODE];
 
     if (!nvm_values_valid(&tmp)) {
         s_nvm_valid = 0U;
         return I2C_OK;
     }
 
+    taskENTER_CRITICAL();
     nvm_data = tmp;
     s_nvm_valid = 1U;
+    s_nvm_dirty = 0U;
+    taskEXIT_CRITICAL();
     return I2C_OK;
 }
 
@@ -165,16 +185,22 @@ i2c_status_type nvm_save(void)
 {
     uint8_t block[NVM_TOTAL_SIZE];
     uint16_t crc;
+    nvm_values_t snap;
     i2c_status_type st;
 
-    if (!nvm_values_valid(&nvm_data)) {
+    taskENTER_CRITICAL();
+    snap = nvm_data;
+    taskEXIT_CRITICAL();
+
+    if (!nvm_values_valid(&snap)) {
         return I2C_ERR_STEP_1;
     }
 
     memset(block, 0, sizeof(block));
-    nvm_pack_float(&block[NVM_OFF_FACTORY_CAPACITY_WH], nvm_data.factory_capacity_wh);
-    nvm_pack_float(&block[NVM_OFF_DISCHARGE_ENERGY_WH], nvm_data.discharge_energy_wh);
-    nvm_pack_float(&block[NVM_OFF_SHUNT_MOHM], nvm_data.shunt_mohm);
+    nvm_pack_float(&block[NVM_OFF_FACTORY_CAPACITY_WH], snap.factory_capacity_wh);
+    nvm_pack_float(&block[NVM_OFF_EQUIVALENT_CYCLES], snap.equivalent_cycles);
+    nvm_pack_float(&block[NVM_OFF_SHUNT_MOHM], snap.shunt_mohm);
+    block[NVM_OFF_BACKUP_CHARGE_MODE] = snap.backup_charge_mode;
 
     crc = nvm_crc16(block, NVM_PAYLOAD_SIZE, nvm_build_magic());
     block[NVM_CRC_OFFSET] = (uint8_t)crc;
@@ -182,6 +208,27 @@ i2c_status_type nvm_save(void)
 
     st = SD3078_SramWrite(0U, block, sizeof(block));
     if (st == I2C_OK) s_nvm_valid = 1U;
+    return st;
+}
+
+i2c_status_type nvm_process(void)
+{
+    i2c_status_type st;
+
+    taskENTER_CRITICAL();
+    if (s_nvm_dirty == 0U) {
+        taskEXIT_CRITICAL();
+        return I2C_OK;
+    }
+    /* 先消费本次 dirty。保存过程中若其它任务再次修改，setter 会重新置 1，
+     * 成功返回后下一轮仍会再保存，不会丢更新。 */
+    s_nvm_dirty = 0U;
+    taskEXIT_CRITICAL();
+
+    st = nvm_save();
+    if (st != I2C_OK) {
+        s_nvm_dirty = 1U;
+    }
     return st;
 }
 
@@ -193,7 +240,12 @@ i2c_status_type nvm_init(void)
     if (s_nvm_valid) return I2C_OK;
 
     nvm_reset_defaults();
-    return nvm_save();
+    st = nvm_save();
+    if (st == I2C_OK) {
+        s_nvm_valid = 1U;
+        s_nvm_dirty = 0U;
+    }
+    return st;
 }
 
 float nvm_get_factory_capacity_wh(void)
@@ -203,22 +255,32 @@ float nvm_get_factory_capacity_wh(void)
 
 void nvm_set_factory_capacity_wh(float value)
 {
+    taskENTER_CRITICAL();
     nvm_data.factory_capacity_wh = value;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
 }
 
-float nvm_get_discharge_energy_wh(void)
+float nvm_get_equivalent_cycles(void)
 {
-    return nvm_data.discharge_energy_wh;
+    return nvm_data.equivalent_cycles;
 }
 
-void nvm_set_discharge_energy_wh(float value)
+void nvm_set_equivalent_cycles(float value)
 {
-    nvm_data.discharge_energy_wh = value;
+    taskENTER_CRITICAL();
+    nvm_data.equivalent_cycles = value;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
 }
 
-void nvm_add_discharge_energy_wh(float delta_wh)
+void nvm_add_equivalent_cycles(float delta)
 {
-    if (delta_wh > 0.0f) nvm_data.discharge_energy_wh += delta_wh;
+    if (delta <= 0.0f) return;
+    taskENTER_CRITICAL();
+    nvm_data.equivalent_cycles += delta;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
 }
 
 float nvm_get_shunt_mohm(void)
@@ -228,5 +290,22 @@ float nvm_get_shunt_mohm(void)
 
 void nvm_set_shunt_mohm(float value)
 {
+    taskENTER_CRITICAL();
     nvm_data.shunt_mohm = value;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
+}
+
+uint8_t nvm_get_backup_charge_mode(void)
+{
+    return nvm_data.backup_charge_mode;
+}
+
+void nvm_set_backup_charge_mode(uint8_t mode)
+{
+    if (mode > 2U) return;
+    taskENTER_CRITICAL();
+    nvm_data.backup_charge_mode = mode;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
 }

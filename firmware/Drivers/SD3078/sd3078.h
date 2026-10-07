@@ -12,7 +12,21 @@ extern "C" {
 #include "stdint.h"
     
 /******************************用户设置区开始**********************************/
+/*包含自己的I2C驱动库*/
 #include "bsp_i2c.h"
+
+/* 外部库给出的 I2C 读写函数（与 SW6306/SC7A20 同一套约定，5 个参数中最后一个
+ * 是完成标志指针，阻塞式实现不使用它——同步返回即代表整笔事务结束）。
+ * 阻塞式（默认）：直接调用 bsp_i2c 的寄存器事务，已内含整笔重试与总线恢复。
+ * 协作式（未启用）：需要 ASYNC_I2C_* 协程库，本工程已不再提供，故保持注释掉。 */
+//#define SD3078_USE_PROTOTHREAD   //允许挂起
+#ifdef SD3078_USE_PROTOTHREAD
+    #define SD3078_I2C_Transmit(addr,reg,pdata,len,pflag)   ASYNC_I2C_Transmit(addr,reg,pdata,len,0,pflag)
+    #define SD3078_I2C_Receive(addr,reg,pdata,len,pflag)    ASYNC_I2C_Receive(addr,reg,pdata,len,0,pflag)
+#else                       //不允许挂起
+    #define SD3078_I2C_Transmit(addr,reg,pdata,len,pflag)   I2C_RegWrite(addr, reg, pdata, len)
+    #define SD3078_I2C_Receive(addr,reg,pdata,len,pflag)    I2C_RegRead(addr, reg, pdata, len)
+#endif
 
 /* 充电功能设置（SD3078 内置 VBAT 充电电路）
  * 默认不充电；需要时由上层显式调用 SD3078_ChargeSet()。 */

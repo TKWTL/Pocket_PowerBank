@@ -44,6 +44,7 @@ void SW6306_AlgoInit(void);
 void SW6306_AlgoUpdate(void);
 void SW6306_AlgoProcessCommands(void);
 void SW6306_AlgoInvalidateDischargeSession(void);
+void SW6306_AlgoOnDriverReinitialized(void);  /* SW6306_task: 重新应用算法层配置 */
 
 /* UI/menu thread: RAM-only requests; no I2C. */
 void SW6306_AlgoRequestProtocolApply(void);

@@ -40,7 +40,7 @@ extern "C" {
 #endif
 
 //加速度计默认配置（可在初始化后按需用SC7A20_SetODR/SetFullScale等修改）
-#define SC7A20_DEFAULT_ODR            SC7A20_ODR_25HZ    //25Hz：供重力方向算法40ms采样；DeepSleep前仍由低功耗流程关闭
+#define SC7A20_DEFAULT_ODR            SC7A20_ODR_10HZ    //10Hz：应用层5Hz读取姿态；DeepSleep前仍由低功耗流程关闭
 #define SC7A20_DEFAULT_FULLSCALE      SC7A20_FS_2G       //默认量程
 #define SC7A20_DEFAULT_HIGHRES        1                  //1=12bit高精度输出（HR），0=10bit
 #define SC7A20_DEFAULT_BDU            1                  //1=块数据更新（读LSB+MSB期间不更新）

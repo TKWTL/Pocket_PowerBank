@@ -481,7 +481,7 @@ SC7A20_RET SC7A20_Init(SC7A20_NOARG)
                           (SC7A20_DEFAULT_BDU ? SC7A20_CTRL4_BDU : 0x00U) |
                           (SC7A20_DEFAULT_FULLSCALE & SC7A20_CTRL4_FS_MSK) |
                           (SC7A20_DEFAULT_HIGHRES ? SC7A20_CTRL4_HR : 0x00U));
-        //控制寄存器1：ODR（当前默认25Hz，供重力方向算法）+ 轴使能
+        //控制寄存器1：ODR（当前默认10Hz，供低速姿态检测）+ 轴使能
         SC7A20_SPAWN_ARGS(SC7A20_ByteWrite, SC7A20_CTRG_CTRL1,
                           (SC7A20_DEFAULT_ODR & SC7A20_CTRL1_ODR_MSK) |
                           (SC7A20_DEFAULT_AXIS_EN & (SC7A20_CTRL1_ZEN|SC7A20_CTRL1_YEN|SC7A20_CTRL1_XEN)));

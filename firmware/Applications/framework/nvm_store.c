@@ -4,21 +4,28 @@
  * Layout (offset relative to SD3078 RAM 0x2C):
  *   0x00..0x03  factory_capacity_wh
  *   0x04..0x07  equivalent_cycles
- *   0x08..0x0B  shunt_mohm
- *   0x0C        backup_charge_mode
- *   0x0D..0x43  reserved (55B)
- *   0x44..0x45  CRC16-CCITT over payload[0..67], seeded by build magic
+ *   0x08..0x09  ibat_zero_raw (int16)
+ *   0x0A..0x0D  ibat_slope_ma_per_lsb (float)
+ *   0x0E        backup_charge_mode
+ *   0x0F..0x43  reserved (53B)
+ *   0x44..0x45  HW CRC16 over payload[0..67], seeded by layout magic
  */
 #include "nvm_store.h"
 #include "sd3078.h"
+#include "at32f423_crc.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <string.h>
 
-#define NVM_OFF_FACTORY_CAPACITY_WH   0U
-#define NVM_OFF_EQUIVALENT_CYCLES     4U
-#define NVM_OFF_SHUNT_MOHM            8U
-#define NVM_OFF_BACKUP_CHARGE_MODE   12U
+#define NVM_OFF_FACTORY_CAPACITY_WH    0U
+#define NVM_OFF_EQUIVALENT_CYCLES      4U
+#define NVM_OFF_IBAT_ZERO_RAW          8U
+#define NVM_OFF_IBAT_SLOPE            10U
+#define NVM_OFF_BACKUP_CHARGE_MODE    14U
+
+/* Bump only when serialized offsets/types change. Normal firmware rebuilds must
+ * keep this value so existing NVM remains valid. */
+#define NVM_LAYOUT_CRC_INIT        0x4E03U
 
 /* 存储格式明确绑定 32-bit IEEE754 float / 16-bit int16_t。 */
 typedef char nvm_float_must_be_4_bytes[(sizeof(float) == 4U) ? 1 : -1];
@@ -32,37 +39,24 @@ nvm_values_t nvm_data;
 static uint8_t s_nvm_valid;
 static volatile uint8_t s_nvm_dirty;
 
-static uint16_t nvm_crc16(const uint8_t *data, uint16_t len, uint16_t seed)
+static uint16_t nvm_crc16(const uint8_t *data)
 {
-    uint16_t crc = seed;
     uint16_t i;
 
-    while (len--) {
-        crc ^= (uint16_t)(*data++) << 8;
-        for (i = 0; i < 8U; i++) {
-            crc = (crc & 0x8000U) ? (uint16_t)((crc << 1) ^ 0x1021U)
-                                  : (uint16_t)(crc << 1);
-        }
-    }
-    return crc;
-}
+    /* CRC clock is enabled by wk_config and restored after DeepSleep. */
+    CRC->ctrl = 0U;
+    CRC->ctrl_bit.poly_size = CRC_POLY_SIZE_16B;
+    CRC->poly = 0x1021U;
+    CRC->idt = NVM_LAYOUT_CRC_INIT;
+    CRC->ctrl_bit.rst = 1U;
 
-uint16_t nvm_build_magic(void)
-{
-#ifdef NVM_FIXED_MAGIC
-    return (uint16_t)NVM_FIXED_MAGIC;
-#else
-    static const char build_id[] = __DATE__ " " __TIME__;
-    uint16_t h = 0xA5C3U;
-    uint16_t i;
-
-    for (i = 0; build_id[i] != '\0'; i++) {
-        h = (uint16_t)((h << 5) | (h >> 11));
-        h ^= (uint8_t)build_id[i];
-        h = (uint16_t)(h * 109U + 0x3DU);
+    for (i = 0U; i < NVM_PAYLOAD_SIZE; i += 4U) {
+        CRC->dt = (uint32_t)data[i] |
+                  ((uint32_t)data[i + 1U] << 8) |
+                  ((uint32_t)data[i + 2U] << 16) |
+                  ((uint32_t)data[i + 3U] << 24);
     }
-    return (h != 0U) ? h : 0x1D0FU;
-#endif
+    return (uint16_t)CRC->dt;
 }
 
 void nvm_pack_float(uint8_t out[4], float value)
@@ -108,7 +102,7 @@ static uint8_t nvm_values_valid(const nvm_values_t *v)
 {
     if (!nvm_float_in_range(v->factory_capacity_wh, 1.0f, 200.0f)) return 0U;
     if (!nvm_float_in_range(v->equivalent_cycles, 0.0f, 1000000.0f)) return 0U;
-    if (!nvm_float_in_range(v->shunt_mohm, 0.1f, 20.0f)) return 0U;
+    if (!nvm_float_in_range(v->ibat_slope_ma_per_lsb, 0.1f, 16.0f)) return 0U;
     if (v->backup_charge_mode > 2U) return 0U;
     return 1U;
 }
@@ -118,7 +112,8 @@ void nvm_reset_defaults(void)
     taskENTER_CRITICAL();
     nvm_data.factory_capacity_wh = NVM_DEFAULT_FACTORY_CAPACITY_WH;
     nvm_data.equivalent_cycles = NVM_DEFAULT_EQUIVALENT_CYCLES;
-    nvm_data.shunt_mohm = NVM_DEFAULT_SHUNT_MOHM;
+    nvm_data.ibat_slope_ma_per_lsb = NVM_DEFAULT_IBAT_SLOPE_MA_PER_LSB;
+    nvm_data.ibat_zero_raw = NVM_DEFAULT_IBAT_ZERO_RAW;
     nvm_data.backup_charge_mode = NVM_DEFAULT_BACKUP_CHARGE_MODE;
     s_nvm_valid = 0U;
     s_nvm_dirty = 0U;
@@ -156,7 +151,7 @@ i2c_status_type nvm_load(void)
 
     stored_crc = (uint16_t)block[NVM_CRC_OFFSET] |
                  ((uint16_t)block[NVM_CRC_OFFSET + 1U] << 8);
-    calc_crc = nvm_crc16(block, NVM_PAYLOAD_SIZE, nvm_build_magic());
+    calc_crc = nvm_crc16(block);
 
     if (stored_crc != calc_crc) {
         s_nvm_valid = 0U;
@@ -165,7 +160,8 @@ i2c_status_type nvm_load(void)
 
     tmp.factory_capacity_wh = nvm_unpack_float(&block[NVM_OFF_FACTORY_CAPACITY_WH]);
     tmp.equivalent_cycles = nvm_unpack_float(&block[NVM_OFF_EQUIVALENT_CYCLES]);
-    tmp.shunt_mohm = nvm_unpack_float(&block[NVM_OFF_SHUNT_MOHM]);
+    tmp.ibat_zero_raw = nvm_unpack_i16(&block[NVM_OFF_IBAT_ZERO_RAW]);
+    tmp.ibat_slope_ma_per_lsb = nvm_unpack_float(&block[NVM_OFF_IBAT_SLOPE]);
     tmp.backup_charge_mode = block[NVM_OFF_BACKUP_CHARGE_MODE];
 
     if (!nvm_values_valid(&tmp)) {
@@ -199,10 +195,11 @@ i2c_status_type nvm_save(void)
     memset(block, 0, sizeof(block));
     nvm_pack_float(&block[NVM_OFF_FACTORY_CAPACITY_WH], snap.factory_capacity_wh);
     nvm_pack_float(&block[NVM_OFF_EQUIVALENT_CYCLES], snap.equivalent_cycles);
-    nvm_pack_float(&block[NVM_OFF_SHUNT_MOHM], snap.shunt_mohm);
+    nvm_pack_i16(&block[NVM_OFF_IBAT_ZERO_RAW], snap.ibat_zero_raw);
+    nvm_pack_float(&block[NVM_OFF_IBAT_SLOPE], snap.ibat_slope_ma_per_lsb);
     block[NVM_OFF_BACKUP_CHARGE_MODE] = snap.backup_charge_mode;
 
-    crc = nvm_crc16(block, NVM_PAYLOAD_SIZE, nvm_build_magic());
+    crc = nvm_crc16(block);
     block[NVM_CRC_OFFSET] = (uint8_t)crc;
     block[NVM_CRC_OFFSET + 1U] = (uint8_t)(crc >> 8);
 
@@ -283,15 +280,28 @@ void nvm_add_equivalent_cycles(float delta)
     taskEXIT_CRITICAL();
 }
 
-float nvm_get_shunt_mohm(void)
+int16_t nvm_get_ibat_zero_raw(void)
 {
-    return nvm_data.shunt_mohm;
+    return nvm_data.ibat_zero_raw;
 }
 
-void nvm_set_shunt_mohm(float value)
+void nvm_set_ibat_zero_raw(int16_t value)
 {
     taskENTER_CRITICAL();
-    nvm_data.shunt_mohm = value;
+    nvm_data.ibat_zero_raw = value;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
+}
+
+float nvm_get_ibat_slope_ma_per_lsb(void)
+{
+    return nvm_data.ibat_slope_ma_per_lsb;
+}
+
+void nvm_set_ibat_slope_ma_per_lsb(float value)
+{
+    taskENTER_CRITICAL();
+    nvm_data.ibat_slope_ma_per_lsb = value;
     s_nvm_dirty = 1U;
     taskEXIT_CRITICAL();
 }

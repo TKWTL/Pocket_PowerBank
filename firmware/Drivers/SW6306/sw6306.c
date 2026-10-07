@@ -9,21 +9,19 @@ static struct SW6306_StatusTypedef SW6306_Status;//SW6306状态全局变量
 
 static uint8_t s_pomax_target = SW6306_OUTPUT_POWER_MAX;   // 运行时最大输出功率目标（W），Init 写入、可由 SetMaxOutputPower 修改
 
-/* 电池端感测电阻校准值（mΩ）：初值 = SW_BATT_RSHUNT（实际硬件值），可由 SW6306_SetBattRShunt 重新校准。
- * 芯片按 SW6306_BATT_RSHUNT_NOMINAL(5mΩ) 标定，实际电阻不同时按比例换算：
- *  - 电流/能量读数 × (NOMINAL / s_batt_rshunt)
- *  - 电池限流设置值 × (s_batt_rshunt / NOMINAL)
- * 输出端（VBUS）固定 5mΩ，不参与校准。 */
-static float s_batt_rshunt = SW_BATT_RSHUNT;
+/* IBAT 两参数校准：原始码先减 int16 零点，再乘 float 斜率。
+ * 库仑计/限流寄存器没有可直接修正的零点，仍只按斜率相对名义 5mA/LSB 缩放。 */
+static int16_t s_ibat_zero_raw = 0;
+static float s_ibat_slope_ma_per_lsb = SW6306_IBAT_SLOPE_DEFAULT;
 
-/* 读数换算系数（电流/能量：放大）与限流设置系数（写入值：缩小） */
-static float sw6306_batt_scale_read(void)
+static float sw6306_ibat_scale_read(void)
 {
-    return (s_batt_rshunt > 0.1f) ? (SW6306_BATT_RSHUNT_NOMINAL / s_batt_rshunt) : 1.0f;
+    return s_ibat_slope_ma_per_lsb / SW6306_IBAT_SLOPE_NOMINAL;
 }
-static float sw6306_batt_scale_set(void)
+
+static float sw6306_ibat_scale_set(void)
 {
-    return (s_batt_rshunt > 0.1f) ? (s_batt_rshunt / SW6306_BATT_RSHUNT_NOMINAL) : 1.0f;
+    return SW6306_IBAT_SLOPE_NOMINAL / s_ibat_slope_ma_per_lsb;
 }
 
 
@@ -129,11 +127,15 @@ SW6306_RET SW6306_ADCLoad(SW6306_NOARG)
         sw6306_adc_read_raw(ch_tab[i], &adc[i]);
     }
 
-    /* 原始码 → 工程量（8mV / 4mA / 7mV / 5mA 每 LSB；电池端感测电阻校准在 ReadIBAT 里做） */
+    /* 原始码 → 工程量；IBAT 在这里完成 zero + slope 校准，镜像直接保存 mA。 */
     if(adc[0].ok) SW6306_Status.vbus  = (uint16_t)(adc[0].raw << 3);//转换BUS电压
     if(adc[1].ok) SW6306_Status.ibus  = (uint16_t)(adc[1].raw << 2);//转换BUS电流
     if(adc[2].ok) SW6306_Status.vbat  = (uint16_t)(adc[2].raw *  7);//转换BAT电压
-    if(adc[3].ok) SW6306_Status.ibat  = (uint16_t)(adc[3].raw *  5);//转换BAT电流
+    if(adc[3].ok)
+    {
+        int32_t raw = (int32_t)adc[3].raw - (int32_t)s_ibat_zero_raw;
+        SW6306_Status.ibat = (raw > 0) ? (uint16_t)((float)raw * s_ibat_slope_ma_per_lsb + 0.5f) : 0U;
+    }
     if(adc[4].ok) SW6306_Status.tntc  = adc[4].raw;
     if(adc[5].ok) SW6306_Status.tchip = adc[5].raw;
     if(adc[6].ok) SW6306_Status.vntc  = adc[6].raw;
@@ -158,28 +160,20 @@ uint16_t SW6306_ReadVBAT(void)//读取BAT电压
 {
     return SW6306_Status.vbat;
 }
-uint16_t SW6306_ReadIBAT(void)//读取BAT电流（已按电池端感测电阻校准）
+uint16_t SW6306_ReadIBAT(void)//读取BAT电流（mA，ADCLoad 时已完成 zero+slope 校准）
 {
-    return (uint16_t)((float)SW6306_Status.ibat * sw6306_batt_scale_read());
+    return SW6306_Status.ibat;
 }
 
-/* 设置电池端感测电阻（mΩ）：硬件改动后重新校准。
- * 拒绝 ≤0.1 的非法值（避免除零/异常缩放）。
- * 注意：本函数仅改校准值；要让芯片内电池限流寄存器按新值重写，
- * 需触发一次重新初始化（如调 SW6306_MarkUninitialized()）。 */
-SW6306_RET SW6306_SetBattRShunt(SW6306_ARGS(float rshunt_mohm))
+SW6306_RET SW6306_SetIBATCalibration(SW6306_ARGS(int16_t zero_raw, float slope_ma_per_lsb))
 {
     SW6306_FUNC_BEGIN;
-    if(rshunt_mohm > 0.1f)
+    if(slope_ma_per_lsb > 0.0f)
     {
-        s_batt_rshunt = rshunt_mohm;
+        s_ibat_zero_raw = zero_raw;
+        s_ibat_slope_ma_per_lsb = slope_ma_per_lsb;
     }
     SW6306_FUNC_END;
-}
-
-float SW6306_GetBattRShunt(void)//读取当前电池端感测电阻校准值（mΩ）
-{
-    return s_batt_rshunt;
 }
 int16_t SW6306_ReadTNTC(void)//读取并转换NTC温度
 {
@@ -314,7 +308,7 @@ uint16_t SW6306_ReadIPortLimit(void)//读取充电时端口限流实时值（单
 }
 uint16_t SW6306_ReadIBattLimit(void)//读取充电时电池限流实时值（单位：mA，已按感测电阻校准）
 {
-    return (uint16_t)((float)(SW6306_Status.ibatlim_chg * 100 + 100) * sw6306_batt_scale_read());
+    return (uint16_t)((float)(SW6306_Status.ibatlim_chg * 100 + 100) * sw6306_ibat_scale_read());
 }
 uint8_t SW6306_ReadMaxOutputPower(void)//读取最大输出功率（单位：W）
 {
@@ -559,11 +553,11 @@ uint8_t SW6306_ReadCapacity(void)//读取SW6306显示电量
  * 例：2S1P 30Q 充满后 maxcap=65 → 65×326.22 ≈ 21203 mWh ≈ 21.2 Wh（≈7.2V×3.0Ah）。 */
 float SW6306_ReadMaxEnergy_mWh(void)//读取库仑计最大能量（单位：mWh，已按感测电阻校准）
 {
-    return SW6306_Status.maxcap * 326.2236f * sw6306_batt_scale_read();
+    return SW6306_Status.maxcap * 326.2236f * sw6306_ibat_scale_read();
 }
 float SW6306_ReadRemainEnergy_mWh(void)//读取库仑计当前（剩余）能量（单位：mWh，已按感测电阻校准）
 {
-    return SW6306_Status.presentcap * 0.07964f * sw6306_batt_scale_read();
+    return SW6306_Status.presentcap * 0.07964f * sw6306_ibat_scale_read();
 }
 sw6306_learn_state_t SW6306_ReadLearnState(void)//读取容量学习状态（0xA2 镜像，3 态 + Unknown）
 {
@@ -1117,12 +1111,12 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_IOCTL, SW6306_IRQ1);
     //强制控制输入输出功率和电池电流
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_FORCECTL, SW6306_FORCECTL_POUT|SW6306_FORCECTL_PIN|SW6306_FORCECTL_IBAT);
-    //设置放电电池端限流值（按实际感测电阻缩放写入值）
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_DCHG_IBAT, (uint8_t)((float)SW6306_BAT_DCHG_CURR_MAX * sw6306_batt_scale_set() / 100.0f + 0.5f));
+    //设置放电电池端限流值（按 IBAT 校准斜率缩放写入值）
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_DCHG_IBAT, (uint8_t)((float)SW6306_BAT_DCHG_CURR_MAX * sw6306_ibat_scale_set() / 100.0f + 0.5f));
     //输入功率设置
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PISET, SW6306_INPUT_POWER_MAX);
-    //设置充电电池端限流值（按实际感测电阻缩放写入值）
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_CHG_IBAT, (uint8_t)((float)SW6306_BAT_CHG_CURR_MAX * sw6306_batt_scale_set() / 100.0f + 0.5f));
+    //设置充电电池端限流值（按 IBAT 校准斜率缩放写入值）
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_CHG_IBAT, (uint8_t)((float)SW6306_BAT_CHG_CURR_MAX * sw6306_ibat_scale_set() / 100.0f + 0.5f));
     //输出功率设置（写入运行时目标，默认 SW6306_OUTPUT_POWER_MAX）
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_POSET, s_pomax_target);
     //输出功率设置

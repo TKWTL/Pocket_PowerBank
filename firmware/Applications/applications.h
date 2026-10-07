@@ -17,7 +17,7 @@ extern "C" {
 
 /* ===== 外设驱动头文件 =====
  * Driver 只负责器件寄存器/镜像；algorithm 层负责业务状态机。
- * load_task：SD3078服务 + SC7A20 25Hz采样 + NVM提交；
+ * load_task：SD3078服务 + SC7A20 5Hz采样 + NVM提交；
  * SW6306_task：SW6306周期采样 + SW6306算法。
  * UI 只读镜像/算法状态并发送RAM request，不直接访问I2C。 */
 #include "drivers.h"

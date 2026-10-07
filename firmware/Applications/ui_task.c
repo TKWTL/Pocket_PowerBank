@@ -62,6 +62,21 @@ static void menu_redraw_handler(void)
     menu_ui_redraw();
 }
 
+/* SC7A20 只决定上下方向；GC9D01 的 1/3 模式均保持 160x40，仅相差180°。 */
+static void ui_auto_rotate(void)
+{
+    static sc7a20_orientation_t applied = SC7A20_ORIENT_UNKNOWN;
+    sc7a20_orientation_t orientation = SC7A20_AlgoGetOrientation();
+
+    if (orientation == applied || orientation == SC7A20_ORIENT_UNKNOWN) {
+        return;
+    }
+
+    GC9D01_rotation((orientation == SC7A20_ORIENT_DOWN) ? 3U : 1U);
+    applied = orientation;
+    lv_obj_invalidate(lv_screen_active());
+}
+
 /* ==================== UI 调度（仿 MiaoUI ui_loop） ====================
  * 按键一次扫描→语义化动作→状态机路由：菜单态→菜单系统；
  * 应用态→当前激活应用（主界面）自包含处理（绘制与按键同文件）。 */
@@ -182,6 +197,7 @@ void ui_task_func(void *pvParameters)
 
         /* 统一 UI 调度：扫描按键→动作→状态机路由（菜单/主界面应用自包含处理） */
         ui_loop();
+        ui_auto_rotate();
 
         uint32_t t = lv_timer_handler();
         if (t == LV_NO_TIMER_READY) {

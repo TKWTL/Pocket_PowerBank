@@ -2,7 +2,7 @@
  *
  * 单线程负责 SD3078、SC7A20、NVM 的实际 I2C 提交：
  *  - 10ms：处理 RTC/后备电池 pending（无请求时不访问I2C）；
- *  - 40ms：SC7A20 25Hz 采样 + 重力方向算法；
+ *  - 200ms：SC7A20 5Hz 采样 + 上下方向算法；
  *  - 500ms：SD3078 镜像、NVM dirty 合并写、WLED 慢速守护；
  *  - 60s：MS621FE Auto 充电策略复核（SD3078 本身约60s更新VBAT测量）。
  * SW6306 周期采样和业务算法由 SW6306_task 单独负责。
@@ -43,8 +43,9 @@ static void sd3078_try_init(void)
         }
         s_nvm_ready = 1U;
 
-        /* shunt 校准值在 SW6306 业务算法开始前装入驱动比例。 */
-        SW6306_SetBattRShunt(nvm_get_shunt_mohm());
+        /* IBAT 校准在 SW6306 业务算法开始前装入驱动。 */
+        SW6306_SetIBATCalibration(nvm_get_ibat_zero_raw(),
+                                  nvm_get_ibat_slope_ma_per_lsb());
     }
 
     /* SD3078_Init 会把充电寄存器恢复为关闭；每次驱动重新初始化后都让
@@ -67,9 +68,6 @@ static void data_refresh_all(void)
     }
     if (SC7A20_IsInitialized()) {
         SC7A20_AccelLoad();
-        if (SC7A20_IsInitialized()) {
-            SC7A20_AlgoUpdate(SC7A20_ReadX_mg(), SC7A20_ReadY_mg(), SC7A20_ReadZ_mg());
-        }
     }
     if (SW6306_IsInitialized()) {
         /* 唤醒预取：SW6306 刚从 LPSet 唤醒，ADC 需时间就绪；
@@ -206,15 +204,13 @@ void load_task(void *pvParameters)
             if (st != I2C_OK) s_sd3078_status = st;
         }
 
-        /* 25Hz SC7A20：采样和姿态算法由同一任务连续推进，避免多线程重复更新算法状态。 */
+        /* 5Hz SC7A20：只有本周期路径推进姿态计时，确保连续约2s才翻转。 */
         if (++sc7_cnt >= (SC7A20_ALGO_SAMPLE_MS / 10U)) {
             sc7_cnt = 0U;
             if (SC7A20_IsInitialized()) {
                 SC7A20_AccelLoad();
                 if (SC7A20_IsInitialized()) {
-                    SC7A20_AlgoUpdate(SC7A20_ReadX_mg(),
-                                      SC7A20_ReadY_mg(),
-                                      SC7A20_ReadZ_mg());
+                    SC7A20_AlgoUpdate(SC7A20_ReadY_mg());
                 }
             }
         }
@@ -228,7 +224,7 @@ void load_task(void *pvParameters)
             sd3078_try_init();
 
             if (!SC7A20_IsInitialized()) {
-                SC7A20_Init();       /* 默认25Hz，供40ms重力方向算法 */
+                SC7A20_Init();       /* 传感器10Hz，应用层按5Hz读取 */
                 SC7A20_AlgoInit();
                 exint_flag_clear(EXINT_LINE_8);
                 NVIC_ClearPendingIRQ(EXINT9_5_IRQn);

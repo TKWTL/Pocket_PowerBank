@@ -318,8 +318,8 @@ static void snap_static(const menu_page_t *pg, uint8_t index)
         lv_label_set_text(s_item, buf);
         item_recenter(s_item);
         lv_obj_set_y(s_item, MENU_ROW_MID_Y);
-        /* Return 用主题色高亮（"<" 是同一 label 的一部分，一起变主题色） */
-        lv_obj_set_style_text_color(s_item, menu_theme_get()->primary, 0);
+        /* 选中项高亮色：Return 用主题色，其余普通文字色（"<" 与文字同一 label） */
+        lv_obj_set_style_text_color(s_item, item_highlight_color(&pg->items[index]), 0);
         lv_obj_remove_flag(s_item_prev, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_item_next, LV_OBJ_FLAG_HIDDEN);
         refresh_prev_next(pg, index);
@@ -486,9 +486,7 @@ static void slide_commit_next(const menu_page_t *pg, uint8_t index)
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
         lv_label_set_text(s_item, buf);
         /* 落定高亮：Return 用主题色，其余用普通文字色（"<" 与文字同一 label，一起变色） */
-        lv_obj_set_style_text_color(s_item,
-            (pg->items[index].type == MENU_ITEM_BACK) ? menu_theme_get()->primary
-                                                      : menu_theme_get()->text, 0);
+        lv_obj_set_style_text_color(s_item, item_highlight_color(&pg->items[index]), 0);
         /* 必须重新居中：动画期间中间项按【未选中简格式】文本宽度定位，
          * 换成完整格式（带箭头/选项）后宽度变了，沿用旧 x 会让它偏左甚至看起来"消失"
          * （snap_static 走的是同一套：set_text 后 item_recenter） */
@@ -534,9 +532,7 @@ static void slide_commit_prev(const menu_page_t *pg, uint8_t index)
     if (n > 0 && index < n) {
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
         lv_label_set_text(s_item, buf);
-        lv_obj_set_style_text_color(s_item,
-            (pg->items[index].type == MENU_ITEM_BACK) ? menu_theme_get()->primary
-                                                      : menu_theme_get()->text, 0);
+        lv_obj_set_style_text_color(s_item, item_highlight_color(&pg->items[index]), 0);
         /* 同 NEXT：换完整格式后必须重新居中（动画期间是按简格式宽度定位的） */
         item_recenter(s_item);
         fmt_item_text(&pg->items[(index + n - 1) % n], false, false, buf, sizeof(buf));
@@ -613,13 +609,19 @@ static bool s_icon_anim_was_active;/* 图标动画上一帧是否在动（结束
 
 /* 按语言返回字体（menu_pages.c 实现，全局共享：菜单渲染 + 主界面都用） */
 
-/* Return（MENU_ITEM_BACK）用主题色；其余条目用普通文字色。
- * 只看条目类型，不区分选中/未选中——所以光标移到别处、Return 落到左上/右下角
- * 或动画途中，它仍然是主题色。 */
-static lv_color_t item_color(const menu_item_t *it)
+/* 条目静止高亮色：只有"选中（中间项）"才允许用主题色。
+ * Return（MENU_ITEM_BACK）选中时用主题色，"<" 与文字同一 label 一起变色；
+ * 未选中（角落）与其余条目一样是普通文字色。 */
+static lv_color_t item_highlight_color(const menu_item_t *it)
 {
     return (it && it->type == MENU_ITEM_BACK) ? menu_theme_get()->primary
                                               : menu_theme_get()->text;
+}
+
+/* 未选中条目的颜色：次要文字灰（角的 prev/next 与普通选中项之外的项都用它） */
+static lv_color_t item_dim_color(void)
+{
+    return menu_theme_get()->text_sec;
 }
 
 /* 取某页某索引的条目（越界返回 NULL） */
@@ -629,6 +631,15 @@ static const menu_item_t *page_item(const menu_page_t *pg, uint8_t index)
         return NULL;
     }
     return &pg->items[index];
+}
+
+/* 未选中项上色：只有"不是当前选中的那一项"才允许落灰。
+ * 曾经这里无条件按 item_highlight_color() 上色，导致中间项与角上的 Return
+ * 同时是主题色（多项高亮）——高亮色只属于中间项。 */
+static void color_unselected(lv_obj_t *lbl, const menu_item_t *it, const menu_item_t *sel)
+{
+    lv_obj_set_style_text_color(lbl, (it == sel) ? item_highlight_color(it)
+                                                 : item_dim_color(), 0);
 }
 
 /* 主题应用（文本页 + 图标页共用）：放在图标页变量定义之后，
@@ -659,31 +670,31 @@ static void apply_theme(const menu_page_t *pg, uint8_t index)
     /* 主题色（primary，可改）：菜单名称与页码，使 Color 切换可见 */
     lv_obj_set_style_text_color(s_header, t->primary, 0);
     lv_obj_set_style_text_color(s_indicator, t->primary, 0);
-    /* 上一项/下一项：普通条目灰色（次要文字）；Return 用主题色，
-     * 所以光标移开后左上/右下角的 Return 仍是主题色（用户要求选中/未选中都跟随）。 */
-    if (n > 1) {
-        uint8_t ip = (uint8_t)((index + n - 1U) % n);
-        uint8_t in = (uint8_t)((index + 1U) % n);
-        const menu_item_t *itp = page_item(pg, ip);
-        const menu_item_t *itn = page_item(pg, in);
-        lv_obj_set_style_text_color(s_item_prev,    item_color(itp), 0);
-        lv_obj_set_style_text_color(s_item_next,    item_color(itn), 0);
-        lv_obj_set_style_text_color(s_item_prev_in, item_color(itp), 0);
-        lv_obj_set_style_text_color(s_item_next_in, item_color(itn), 0);
-    } else {
-        lv_obj_set_style_text_color(s_item_prev, t->text_sec, 0);
-        lv_obj_set_style_text_color(s_item_next, t->text_sec, 0);
-        lv_obj_set_style_text_color(s_item_prev_in, t->text_sec, 0);
-        lv_obj_set_style_text_color(s_item_next_in, t->text_sec, 0);
+    /* 上一项/下一项（含动画滑入的那两份）：未选中态。
+     * 只对"当前索引"这一项保留高亮色兜底（正常情况下它就是中间项，不会走到角上），
+     * 其余一律次要灰 —— 高亮色只属于中间项，避免多项同时高亮。 */
+    {
+        const menu_item_t *sel = page_item(pg, index);
+        if (n > 1) {
+            color_unselected(s_item_prev,    page_item(pg, (uint8_t)((index + n - 1U) % n)), sel);
+            color_unselected(s_item_next,    page_item(pg, (uint8_t)((index + 1U) % n)), sel);
+            color_unselected(s_item_prev_in, page_item(pg, (uint8_t)((index + n - 1U) % n)), sel);
+            color_unselected(s_item_next_in, page_item(pg, (uint8_t)((index + 1U) % n)), sel);
+        } else {
+            lv_obj_set_style_text_color(s_item_prev,    item_dim_color(), 0);
+            lv_obj_set_style_text_color(s_item_next,    item_dim_color(), 0);
+            lv_obj_set_style_text_color(s_item_prev_in, item_dim_color(), 0);
+            lv_obj_set_style_text_color(s_item_next_in, item_dim_color(), 0);
+        }
+        /* 当前条目：静止高亮；滑动动画中灰色（防止动画期间任何 redraw 把
+         * s_item/s_item_in 刷回高亮，造成新旧选中项同时高亮——
+         * 高亮只允许出现在静止态的中间项）。
+         * Return（MENU_ITEM_BACK）选中时用主题色 primary，"<" 与文字同一 label 一起变色。 */
+        lv_obj_set_style_text_color(s_item,
+            s_sliding ? item_dim_color() : item_highlight_color(sel), 0);
+        lv_obj_set_style_text_color(s_item_in,
+            s_sliding ? item_dim_color() : item_highlight_color(sel), 0);
     }
-    /* 当前条目：静止高亮；滑动动画中灰色（防止动画期间任何 redraw 把
-     * s_item/s_item_in 刷回高亮，造成新旧选中项同时高亮——
-     * 高亮只允许出现在静止态的中间项）。
-     * Return（MENU_ITEM_BACK）用主题色 primary，"<" 与文字同一 label 一起变色。 */
-    lv_obj_set_style_text_color(s_item,
-        s_sliding ? t->text_sec : item_color(page_item(pg, index)), 0);
-    lv_obj_set_style_text_color(s_item_in,
-        s_sliding ? t->text_sec : item_color(page_item(pg, index)), 0);
     /* 图标页顶部文字条：名称与时间始终高亮（主题色 primary） */
     lv_obj_set_style_text_color(s_icon_hint, t->primary, 0);
     lv_obj_set_style_text_color(s_icon_clock, t->primary, 0);

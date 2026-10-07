@@ -16,10 +16,10 @@ extern "C" {
 #include "algorithm/sc7a20_algo.h"      /* 重力方向/旋转判定 */
 
 /* ===== 外设驱动头文件 =====
- * 统一包含头 drivers.h：增删外部功能芯片时只改 Drivers/drivers.h 即可移植。
- * 传感器/时间镜像集成在各驱动句柄内（SD3078_Status / SC7A20_Status）：
- * load_task 0.5s 刷新句柄镜像（TimeLoad/TempLoad/BattLoad + AccelLoad），
- * UI 只读驱动 Read* 系列（读句柄镜像，不访问 I2C），避免并发。 */
+ * Driver 只负责器件寄存器/镜像；algorithm 层负责业务状态机。
+ * load_task：SD3078服务 + SC7A20 25Hz采样 + NVM提交；
+ * SW6306_task：SW6306周期采样 + SW6306算法。
+ * UI 只读镜像/算法状态并发送RAM request，不直接访问I2C。 */
 #include "drivers.h"
 
 #ifdef __cplusplus

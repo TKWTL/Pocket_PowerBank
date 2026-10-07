@@ -78,6 +78,9 @@ void SW6306_task_func(void *pvParameters)
             SW6306_IextEnSet(0);
             SW6306_IextDirSet(1);
             SW6306_IextSet(10);
+            if (SW6306_IsInitialized()) {
+                SW6306_AlgoOnDriverReinitialized();
+            }
         }
 
         sw6306_update_sleep_block();

@@ -1,9 +1,9 @@
 /* load_task.c - 慢速外设/系统服务任务（10ms 状态机）
  *
  * 单线程负责 SD3078、SC7A20、NVM 的实际 I2C 提交：
- *  - 10ms：处理 RTC/后备电池 pending、NVM dirty；
+ *  - 10ms：处理 RTC/后备电池 pending（无请求时不访问I2C）；
  *  - 40ms：SC7A20 25Hz 采样 + 重力方向算法；
- *  - 500ms：SD3078 镜像、WLED 慢速守护；
+ *  - 500ms：SD3078 镜像、NVM dirty 合并写、WLED 慢速守护；
  *  - 60s：MS621FE Auto 充电策略复核（SD3078 本身约60s更新VBAT测量）。
  * SW6306 周期采样和业务算法由 SW6306_task 单独负责。
  */
@@ -206,12 +206,6 @@ void load_task(void *pvParameters)
             if (st != I2C_OK) s_sd3078_status = st;
         }
 
-        /* NVM 由本任务统一落盘；其它线程只改 RAM mirror + dirty。 */
-        if (s_nvm_ready && nvm_is_dirty()) {
-            i2c_status_type st = nvm_process();
-            if (st != I2C_OK) s_sd3078_status = st;
-        }
-
         /* 25Hz SC7A20：采样和姿态算法由同一任务连续推进，避免多线程重复更新算法状态。 */
         if (++sc7_cnt >= (SC7A20_ALGO_SAMPLE_MS / 10U)) {
             sc7_cnt = 0U;
@@ -242,6 +236,11 @@ void load_task(void *pvParameters)
 
             if (s_sd3078_status == I2C_OK) {
                 s_sd3078_status = sd3078_refresh_mirrors();
+
+                /* NVM setter 只置 dirty；500ms 合并窗口避免菜单连续步进造成密集 SRAM 写。 */
+                if (s_sd3078_status == I2C_OK && s_nvm_ready && nvm_is_dirty()) {
+                    s_sd3078_status = nvm_process();
+                }
 
                 /* Auto 后备电池策略一分钟复核一次已经足够；SD3078 的 VBAT/TEMP
                  * 硬件自动测量本身也是分钟级。 */

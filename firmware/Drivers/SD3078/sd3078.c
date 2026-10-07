@@ -211,123 +211,8 @@ SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(const sd3078_time_t *t))
     SD3078_FUNC_END;
 }
 
-/* 请求设置时间（UI 调用，十进制输入；写入句柄待 load_task 提交，UI 不直接访问 I2C） */
-SD3078_RET SD3078_RequestTimeSet(
-    SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day,
-                uint8_t hour, uint8_t min, uint8_t sec))
-{
-    if (year > 99U || month < 1U || month > 12U || day < 1U || day > 31U ||
-        hour > 23U || min > 59U || sec > 59U) {
-        return I2C_ERR_STEP_1;
-    }
-
-    taskENTER_CRITICAL();
-    SD3078_YEAR(&SD3078_Status.set_time)  = year;
-    SD3078_MONTH(&SD3078_Status.set_time) = month;
-    SD3078_DAY(&SD3078_Status.set_time)   = day;
-    SD3078_HOUR(&SD3078_Status.set_time)  = hour;
-    SD3078_MIN(&SD3078_Status.set_time)   = min;
-    SD3078_SEC(&SD3078_Status.set_time)   = sec;
-    SD3078_Status.time_set_mask |= 0x3FU;
-    taskEXIT_CRITICAL();
-    return I2C_OK;
-}
-
-SD3078_RET SD3078_RequestTimeFieldSet(
-    SD3078_ARGS(sd3078_time_field_t field, uint8_t value))
-{
-    uint8_t bit;
-
-    switch (field) {
-    case SD3078_TIME_FIELD_SEC:
-        if (value > 59U) return I2C_ERR_STEP_1;
-        bit = 0U; break;
-    case SD3078_TIME_FIELD_MIN:
-        if (value > 59U) return I2C_ERR_STEP_1;
-        bit = 1U; break;
-    case SD3078_TIME_FIELD_HOUR:
-        if (value > 23U) return I2C_ERR_STEP_1;
-        bit = 2U; break;
-    case SD3078_TIME_FIELD_DAY:
-        if (value < 1U || value > 31U) return I2C_ERR_STEP_1;
-        bit = 3U; break;
-    case SD3078_TIME_FIELD_MONTH:
-        if (value < 1U || value > 12U) return I2C_ERR_STEP_1;
-        bit = 4U; break;
-    case SD3078_TIME_FIELD_YEAR:
-        if (value > 99U) return I2C_ERR_STEP_1;
-        bit = 5U; break;
-    default:
-        return I2C_ERR_STEP_1;
-    }
-
-    taskENTER_CRITICAL();
-    switch (field) {
-    case SD3078_TIME_FIELD_SEC:   SD3078_SEC(&SD3078_Status.set_time) = value; break;
-    case SD3078_TIME_FIELD_MIN:   SD3078_MIN(&SD3078_Status.set_time) = value; break;
-    case SD3078_TIME_FIELD_HOUR:  SD3078_HOUR(&SD3078_Status.set_time) = value; break;
-    case SD3078_TIME_FIELD_DAY:   SD3078_DAY(&SD3078_Status.set_time) = value; break;
-    case SD3078_TIME_FIELD_MONTH: SD3078_MONTH(&SD3078_Status.set_time) = value; break;
-    case SD3078_TIME_FIELD_YEAR:  SD3078_YEAR(&SD3078_Status.set_time) = value; break;
-    default: break;
-    }
-    SD3078_Status.time_set_mask |= (uint8_t)(1U << bit);
-    taskEXIT_CRITICAL();
-    return I2C_OK;
-}
-
-/* 检测并提交时间设置请求（load_task 0.5s 周期调用；星期保留句柄镜像当前值）
- * 内部依次调用 Unlock/TimeSetDec/Lock（各含互斥），自身不持锁，避免嵌套死锁 */
-SD3078_RET SD3078_TimeSetProcess(SD3078_NOARG)
-{
-    sd3078_time_t req;
-    sd3078_time_t t;
-    uint8_t mask;
-    i2c_status_type st;
-    i2c_status_type lock_st;
-
-    taskENTER_CRITICAL();
-    mask = SD3078_Status.time_set_mask;
-    req = SD3078_Status.set_time;
-    SD3078_Status.time_set_mask &= (uint8_t)~mask;
-    taskEXIT_CRITICAL();
-
-    if (mask == 0U) return I2C_OK;
-
-    /* 每次提交前重新读取硬件当前时间，只覆盖用户修改字段。 */
-    st = SD3078_TimeLoad();
-    if (st != I2C_OK) {
-        taskENTER_CRITICAL();
-        SD3078_Status.time_set_mask |= mask;
-        taskEXIT_CRITICAL();
-        return st;
-    }
-
-    t = SD3078_Status.time_dec;
-    if (mask & (1U << 0)) SD3078_SEC(&t)   = SD3078_SEC(&req);
-    if (mask & (1U << 1)) SD3078_MIN(&t)   = SD3078_MIN(&req);
-    if (mask & (1U << 2)) SD3078_HOUR(&t)  = SD3078_HOUR(&req);
-    if (mask & (1U << 3)) SD3078_DAY(&t)   = SD3078_DAY(&req);
-    if (mask & (1U << 4)) SD3078_MONTH(&t) = SD3078_MONTH(&req);
-    if (mask & (1U << 5)) SD3078_YEAR(&t)  = SD3078_YEAR(&req);
-
-    st = SD3078_Unlock();
-    if (st == I2C_OK) {
-        st = SD3078_TimeSetDec(&t);
-        lock_st = SD3078_Lock(); /* 写失败也尝试恢复写保护 */
-        if (st == I2C_OK) st = lock_st;
-    }
-
-    if (st != I2C_OK) {
-        taskENTER_CRITICAL();
-        SD3078_Status.time_set_mask |= mask;
-        taskEXIT_CRITICAL();
-        return st;
-    }
-
-    SD3078_Status.time_dec = t;
-    return I2C_OK;
-}
+/* RTC 编辑请求/合并/提交策略已移至 Applications/algorithm/sd3078_algo.c。
+ * Driver 保留 TimeLoad/TimeSetDec 两个原子硬件操作。 */
 
 /******************************时间报警操作区**********************************/
 SD3078_RET SD3078_AlarmLoad(SD3078_NOARG)
@@ -472,12 +357,8 @@ uint8_t SD3078_IsBattHigh(void)//电池高压标志（BHF，高于3.3V）
     return SD3078_Status.ctr5 & SD3078_CTR5_BHF;
 }
 
-/*设置充电功能与限流电阻
-/enable：1=使能充电，0=禁止
-/res_sel：0=10kΩ，1=5kΩ，2=2kΩ，3=断开
-/注意：使用充电电池时，每次上电必须重置18H寄存器为82H（2kΩ+使能）以确保充电功能打开；
-/      非充电电池务必禁止充电，否则会损坏电池
-*/
+/* 设置充电功能与限流电阻。
+ * 本函数只做寄存器访问；MS621FE Off/On/Auto 管理在 sd3078_algo.c。 */
 SD3078_RET SD3078_ChargeSet(SD3078_ARGS(uint8_t enable, uint8_t res_sel))
 {
     SD3078_FUNC_BEGIN;

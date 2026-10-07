@@ -237,6 +237,39 @@ static void pos_next_corner(lv_obj_t *lbl)
     lv_obj_set_pos(lbl, MENU_SCR_W - lv_obj_get_width(lbl) - MENU_CORNER_X, MENU_ROW_BOT_Y);
 }
 
+/* ---------- 条目配色（必须定义在所有使用它的函数之前） ----------
+ * 角色划分，只有中间选中行允许用高亮色：
+ *  - item_highlight_color()：选中行颜色。Return（MENU_ITEM_BACK）用主题色，
+ *    其余普通文字色；"<" 与文字同属一个 label，所以一起变色。
+ *  - item_dim_color()：未选中行颜色（4 个角落标签），次要文字灰。
+ *  - color_unselected()：给角落标签上色；只有当该角标恰好就是选中项时才用高亮色
+ *    （正常不会发生），从代码上固化"高亮只属于中间行"这条不变量。 */
+static lv_color_t item_highlight_color(const menu_item_t *it)
+{
+    return (it && it->type == MENU_ITEM_BACK) ? menu_theme_get()->primary
+                                              : menu_theme_get()->text;
+}
+
+static lv_color_t item_dim_color(void)
+{
+    return menu_theme_get()->text_sec;
+}
+
+/* 取某页某索引的条目（越界返回 NULL） */
+static const menu_item_t *page_item(const menu_page_t *pg, uint8_t index)
+{
+    if (!pg || index >= pg->item_count) {
+        return NULL;
+    }
+    return &pg->items[index];
+}
+
+static void color_unselected(lv_obj_t *lbl, const menu_item_t *it, const menu_item_t *sel)
+{
+    lv_obj_set_style_text_color(lbl, (it == sel) ? item_highlight_color(it)
+                                                 : item_dim_color(), 0);
+}
+
 /* 更新左上/右下角上一项/下一项文本（菜单循环，取模索引） */
 static void refresh_prev_next(const menu_page_t *pg, uint8_t index)
 {
@@ -608,39 +641,6 @@ static bool s_icon_page_was;       /* 上一帧是否图标页（判断进入图
 static bool s_icon_anim_was_active;/* 图标动画上一帧是否在动（结束后整屏重绘清残留） */
 
 /* 按语言返回字体（menu_pages.c 实现，全局共享：菜单渲染 + 主界面都用） */
-
-/* 条目静止高亮色：只有"选中（中间项）"才允许用主题色。
- * Return（MENU_ITEM_BACK）选中时用主题色，"<" 与文字同一 label 一起变色；
- * 未选中（角落）与其余条目一样是普通文字色。 */
-static lv_color_t item_highlight_color(const menu_item_t *it)
-{
-    return (it && it->type == MENU_ITEM_BACK) ? menu_theme_get()->primary
-                                              : menu_theme_get()->text;
-}
-
-/* 未选中条目的颜色：次要文字灰（角的 prev/next 与普通选中项之外的项都用它） */
-static lv_color_t item_dim_color(void)
-{
-    return menu_theme_get()->text_sec;
-}
-
-/* 取某页某索引的条目（越界返回 NULL） */
-static const menu_item_t *page_item(const menu_page_t *pg, uint8_t index)
-{
-    if (!pg || index >= pg->item_count) {
-        return NULL;
-    }
-    return &pg->items[index];
-}
-
-/* 未选中项上色：只有"不是当前选中的那一项"才允许落灰。
- * 曾经这里无条件按 item_highlight_color() 上色，导致中间项与角上的 Return
- * 同时是主题色（多项高亮）——高亮色只属于中间项。 */
-static void color_unselected(lv_obj_t *lbl, const menu_item_t *it, const menu_item_t *sel)
-{
-    lv_obj_set_style_text_color(lbl, (it == sel) ? item_highlight_color(it)
-                                                 : item_dim_color(), 0);
-}
 
 /* 主题应用（文本页 + 图标页共用）：放在图标页变量定义之后，
  * 因为图标页对象（s_icons / s_icon_hint / s_icon_clock）在本分区声明。

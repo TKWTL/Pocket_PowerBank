@@ -250,6 +250,16 @@ void SW6306_AlgoProcessCommands(void)
     sw6306_algo_restore_commands(retry);
 }
 
+void SW6306_AlgoOnDriverReinitialized(void)
+{
+    /* Driver Init restores compile-time defaults.  Re-apply the application's current
+     * config after every successful re-init so menu state and hardware cannot diverge. */
+    SW6306_AlgoInvalidateDischargeSession();
+    sw6306_algo_set_command(SW6306_CMD_PROTOCOL |
+                            SW6306_CMD_POWER |
+                            SW6306_CMD_LEARN);
+}
+
 void SW6306_AlgoRequestProtocolApply(void)
 {
     sw6306_algo_set_command(SW6306_CMD_PROTOCOL);

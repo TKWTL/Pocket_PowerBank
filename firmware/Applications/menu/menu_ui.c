@@ -346,10 +346,14 @@ static void pid_stop_all(void)
 }
 
 /* 把整屏设置成指定索引的静止态（无动画残留、对象状态完全一致）：
- * 滑动结束、以及动画被按键打断后重开滑动前都走这里，保证从一致状态出发。 */
+ * 滑动结束、以及动画被按键打断后重开滑动前都走这里，保证从一致状态出发。
+ * 三个静止标签（中间/左上/右下）的文本与颜色都在这里一次写全 —— 换页时若只写
+ * 中间项，角落会带着上一页的条目残留（例如从 Settings 退出再进别的文本页，
+ * 左上角还显示 Power Limit）。 */
 static void snap_static(const menu_page_t *pg, uint8_t index)
 {
     char buf[32];
+    uint8_t n = pg ? pg->item_count : 0;
 
     pid_stop_all();
     s_sliding = false;
@@ -364,11 +368,26 @@ static void snap_static(const menu_page_t *pg, uint8_t index)
         lv_label_set_text(s_item, buf);
         item_recenter(s_item);
         lv_obj_set_y(s_item, MENU_ROW_MID_Y);
-        /* 选中项高亮色：Return 用主题色，其余普通文字色（"<" 与文字同一 label） */
+        /* 选中项高亮色：选中 Return 用白色，其余普通文字色（"<" 与文字同一 label） */
         lv_obj_set_style_text_color(s_item, item_selected_color(&pg->items[index]), 0);
         lv_obj_remove_flag(s_item_prev, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_item_next, LV_OBJ_FLAG_HIDDEN);
-        refresh_prev_next(pg, index);
+        if (n > 1) {
+            const menu_item_t *itp = page_item(pg, (uint8_t)((index + n - 1U) % n));
+            const menu_item_t *itn = page_item(pg, (uint8_t)((index + 1U) % n));
+            fmt_item_text(itp, false, false, buf, sizeof(buf));
+            lv_label_set_text(s_item_prev, buf);
+            color_unselected(s_item_prev, itp);
+            lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);
+            fmt_item_text(itn, false, false, buf, sizeof(buf));
+            lv_label_set_text(s_item_next, buf);
+            color_unselected(s_item_next, itn);
+            pos_next_corner(s_item_next);
+        } else {
+            /* 单条目页：两个角落清空，避免残留上一页文本 */
+            lv_label_set_text(s_item_prev, "");
+            lv_label_set_text(s_item_next, "");
+        }
     }
 
     lv_obj_invalidate(s_scr);

@@ -141,6 +141,17 @@ static void pm_enter_deep_sleep(void)
 {
     /* ── 休眠前排空 ── */
 
+    /* 先给 load_task 一个最多600ms的窗口把 NVM dirty 合并落盘。
+     * powerdown_task 自己不写 SD3078，仍保持“NVM I2C 只有 load_task 执行”的单写者规则。
+     * 若 RTC/I2C 故障导致一直 dirty，超时后仍继续休眠，避免电源状态机被永久卡住。 */
+    {
+        uint16_t wait = 0U;
+        while (nvm_is_dirty() != 0U && wait < 600U) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            wait += 10U;
+        }
+    }
+
     /* ① 睡眠总线门控：置位 → load/SW6306 任务停止发起新总线读写（下一轮让出） */
     pm_api_sleep_gate_set(1);
 

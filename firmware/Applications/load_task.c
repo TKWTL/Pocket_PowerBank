@@ -1,12 +1,11 @@
-/* load_task.c - 传感器/时间/电源数据读取任务（10ms 状态机）
+/* load_task.c - 慢速外设/系统服务任务（10ms 状态机）
  *
- * 本任务集中所有 I2C 访问（SD3078/SC7A20），并承担唤醒/事件数据预取：
- *  - 10ms tick 轮询：累计 50 tick（500ms）执行一轮周期刷新（SD3078/SC7A20 镜像）；
- *  - 检测数据刷新请求（EXINT 中断置单一 flag）：立即执行一轮完整读取
- *    （SW6306 全套 + SD3078 + SC7A20），完成后 pm_api_data_refresh_done()
- *    置位唤醒使能（数据就绪）→ ui_task 解除阻塞，先绘后亮。
- *  - SW6306 周期读取仍在 SW6306_task；两任务并发读 SW6306 由 I2C 互斥锁保护。
- * UI 只读驱动句柄镜像（Read* 系列，不访问 I2C），避免并发访问外设。
+ * 单线程负责 SD3078、SC7A20、NVM 的实际 I2C 提交：
+ *  - 10ms：处理 RTC/后备电池 pending、NVM dirty；
+ *  - 40ms：SC7A20 25Hz 采样 + 重力方向算法；
+ *  - 500ms：SD3078 镜像、WLED 慢速守护；
+ *  - 60s：MS621FE Auto 充电策略复核（SD3078 本身约60s更新VBAT测量）。
+ * SW6306 周期采样和业务算法由 SW6306_task 单独负责。
  */
 #include "applications.h"
 
@@ -35,7 +34,7 @@ static void sd3078_try_init(void)
     s_sd3078_status = SD3078_Init();
     if (s_sd3078_status != I2C_OK) return;
 
-    /* NVM 原型只在 SD3078 已可靠在线后初始化一次。CRC 不合法会自动写入默认值。 */
+    /* NVM 依赖 SD3078 Backup RAM，因此只在 RTC 驱动已可靠在线后初始化。 */
     if (!s_nvm_ready) {
         st = nvm_init();
         if (st != I2C_OK) {
@@ -44,9 +43,13 @@ static void sd3078_try_init(void)
         }
         s_nvm_ready = 1U;
 
-        /* 三个 float 中先让 shunt 校准值直接参与现有 SW6306 读数比例，便于实机验证。 */
+        /* shunt 校准值在 SW6306 业务算法开始前装入驱动比例。 */
         SW6306_SetBattRShunt(nvm_get_shunt_mohm());
     }
+
+    /* SD3078_Init 会把充电寄存器恢复为关闭；每次驱动重新初始化后都让
+     * algo 重新装载持久化模式并按策略恢复。 */
+    SD3078_AlgoInit();
 }
 
 /* 一轮完整读取（唤醒预取 / 事件即时刷新）：SD3078 + SC7A20 + SW6306 镜像。
@@ -59,11 +62,14 @@ static void data_refresh_all(void)
     if (s_sd3078_status == I2C_OK) {
         s_sd3078_status = sd3078_refresh_mirrors();
         if (s_sd3078_status == I2C_OK) {
-            s_sd3078_status = SD3078_TimeSetProcess();
+            s_sd3078_status = SD3078_AlgoProcessFast();
         }
     }
     if (SC7A20_IsInitialized()) {
-        SC7A20_AccelLoad();      /* 三轴加速度原始数据镜像（Read*_mg 读它换算） */
+        SC7A20_AccelLoad();
+        if (SC7A20_IsInitialized()) {
+            SC7A20_AlgoUpdate(SC7A20_ReadX_mg(), SC7A20_ReadY_mg(), SC7A20_ReadZ_mg());
+        }
     }
     if (SW6306_IsInitialized()) {
         /* 唤醒预取：SW6306 刚从 LPSet 唤醒，ADC 需时间就绪；
@@ -180,86 +186,78 @@ static void wled_soc_manage(void)
 void load_task(void *pvParameters)
 {
     (void)pvParameters;
-    uint32_t period_cnt = 0;
+    uint32_t period_cnt = 0U;
+    uint8_t sc7_cnt = 0U;
+    uint8_t sd3078_slow_cnt = 0U;
 
-    WLED_Init();   /* 初始化 WLED 亮度状态（恢复上次调光档位，不点灯） */
+    WLED_Init();
+    SC7A20_AlgoInit();
 
     for (;;) {
-        /* 睡眠门控：睡眠准备/深睡期间不发起总线读写（已发起的由 powerdown 等待完成） */
+        /* 睡眠准备/DeepSleep期间停止发起新的总线事务。 */
         if (pm_api_sleep_gate_get() != 0) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
-        /* 时间设置请求每 10ms 检查一次。无 pending 时函数立即返回，不产生 I2C；
-         * 有修改时可在下一轮状态机内实时读 RTC 并整组写回，而不是等 500ms。 */
+        /* SD3078 快速服务：没有 pending 时只检查 RAM flag，不访问 I2C。 */
         if (s_sd3078_status == I2C_OK) {
-            i2c_status_type st = SD3078_TimeSetProcess();
+            i2c_status_type st = SD3078_AlgoProcessFast();
             if (st != I2C_OK) s_sd3078_status = st;
         }
 
+        /* NVM 由本任务统一落盘；其它线程只改 RAM mirror + dirty。 */
+        if (s_nvm_ready && nvm_is_dirty()) {
+            i2c_status_type st = nvm_process();
+            if (st != I2C_OK) s_sd3078_status = st;
+        }
+
+        /* 25Hz SC7A20：采样和姿态算法由同一任务连续推进，避免多线程重复更新算法状态。 */
+        if (++sc7_cnt >= (SC7A20_ALGO_SAMPLE_MS / 10U)) {
+            sc7_cnt = 0U;
+            if (SC7A20_IsInitialized()) {
+                SC7A20_AccelLoad();
+                if (SC7A20_IsInitialized()) {
+                    SC7A20_AlgoUpdate(SC7A20_ReadX_mg(),
+                                      SC7A20_ReadY_mg(),
+                                      SC7A20_ReadZ_mg());
+                }
+            }
+        }
+
         if (pm_api_data_refresh_pending() != 0) {
-            /* 数据刷新请求（唤醒预取 / RUN 态事件）：立即一轮完整读取 */
             data_refresh_all();
-            pm_api_data_refresh_done();   /* 清请求 + 置位唤醒使能（数据就绪） */
-        } else if (++period_cnt >= 50) {  /* 50×10ms = 500ms 周期轮询 */
-            period_cnt = 0;
+            pm_api_data_refresh_done();
+        } else if (++period_cnt >= 50U) {  /* 50×10ms = 500ms */
+            period_cnt = 0U;
 
             sd3078_try_init();
 
             if (!SC7A20_IsInitialized()) {
-                SC7A20_Init();       /* 正式初始化：H_LACTIVE=1 INT极性修正 + ODR 1Hz */
-                /* SC7A20 上电/改极性可能产生沿，清 EXINT8 pending 防伪中断 */
+                SC7A20_Init();       /* 默认25Hz，供40ms重力方向算法 */
+                SC7A20_AlgoInit();
                 exint_flag_clear(EXINT_LINE_8);
                 NVIC_ClearPendingIRQ(EXINT9_5_IRQn);
             }
 
             if (s_sd3078_status == I2C_OK) {
                 s_sd3078_status = sd3078_refresh_mirrors();
+
+                /* Auto 后备电池策略一分钟复核一次已经足够；SD3078 的 VBAT/TEMP
+                 * 硬件自动测量本身也是分钟级。 */
+                if (s_sd3078_status == I2C_OK) {
+                    if (++sd3078_slow_cnt >= 120U) { /* 120×500ms = 60s */
+                        sd3078_slow_cnt = 0U;
+                        s_sd3078_status = SD3078_AlgoProcessSlow();
+                    }
+                }
             }
-            if (SC7A20_IsInitialized()) {
-                SC7A20_AccelLoad();      /* 三轴加速度原始数据镜像（Read*_mg 读它换算） */
-            }
-            wled_soc_manage();   /* 500ms：管理假 A1 口（插入/让位/补位） */
-            WLED_Update();       /* 500ms：WLED 保护（仅开启时判断，过温/零电量强制关灯） */
+
+            wled_soc_manage();
+            WLED_Update();
         }
-        /* 每 10ms：WLED 亮度渐变（相位逼近目标档位；灯关时立即返回）+ 轮询计时 */
+
         WLED_Tick();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
-
-/* ==================== 胚胎区：自动重力方向感应（未来功能，仅注释说明，暂不启用） ====================
- * 目标：依据 SC7A20 三轴重力分量（驱动句柄镜像，1g ≈ 1000mg）自动判断设备姿态，
- *       为 UI 旋转（横/竖屏）、休眠策略或重力相关交互提供方向依据。
- *
- * 设想算法（阈值可调，加入迟滞防临界抖动）：
- *   - 取最大 |axis| 为主受力轴：
- *       x >= +600mg → 右侧立；x <= -600mg → 左侧立；
- *       y >= +600mg → 竖屏正向（充电口朝下）；y <= -600mg → 竖屏反向；
- *       否则（|z| 主导）→ 平放（可再分正/反面）。
- *   - 迟滞：进入新方向需超过高阈值，回到原方向需低于低阈值。
- *
- * 未来接入 load_task 0.5s 循环后调用（读驱动句柄镜像，不直接访问 I2C）。
- * 代码占位（#if 0 排除，未定义符号不影响编译）：
- */
-#if 0
-typedef enum {
-    ORIENT_FLAT,     /* 平放 */
-    ORIENT_LEFT,     /* 左立 */
-    ORIENT_RIGHT,    /* 右立 */
-    ORIENT_UP,       /* 竖屏正向 */
-    ORIENT_DOWN,     /* 竖屏反向 */
-} orient_t;
-
-static orient_t s_orient = ORIENT_FLAT;
-
-/* 依据 SC7A20 句柄镜像估算姿态（未来在 0.5s 循环里调用） */
-static void orient_update(void)
-{
-    float x = SC7A20_ReadX_mg();   /* 读驱动句柄镜像（load_task 已 AccelLoad 刷新） */
-    float y = SC7A20_ReadY_mg();
-    float z = SC7A20_ReadZ_mg();
-    /* ... 阈值判断 + 迟滞，更新 s_orient ... */
-}
-#endif

@@ -391,11 +391,8 @@ static const menu_item_t menu_items_battery_set[] = {
 MENU_PAGE_("Battery", menu_page_battery_set, menu_items_battery_set);
 
 /* ==================== PowerBank → SW6306 子页（手动重新初始化） ====================
- * 背景：I²C 读失败自动置离线→自动重初始化这条路径已被
- * SW6306_I2C_FAIL_MARK_OFFLINE（sw6306.h）临时屏蔽，避免布线干扰下被反复重初始化；
- * 需要时在这里手动触发一次（ForceOff + Init 由 SW6306_task 下一轮完成）。
- * 注意：MarkUninitialized() 只是清 initialized 标志；若要做完整复位并重新配置，
- * 后续可在此页扩展（当前只按需求提供"重新初始化"）。 */
+ * 菜单只发 RAM request；SW6306_task 负责失效 session、重初始化硬件，
+ * 成功后 sw6306_algo 会重新应用当前协议/功率/容量学习配置。 */
 static void sw6306_reinit_apply(menu_item_t *it)
 {
     (void)it;
@@ -488,7 +485,7 @@ static const menu_item_t menu_items_status[] = {
 MENU_PAGE_("Status", menu_page_status, menu_items_status);
 
 /* 刷新状态页全部子页缓冲（ui_task 定时调用）。
- * 对未初始化的芯片输出占位符，避免 I2C 空访问（SD3078/SC7A20 未初始化时勿读）。 */
+ * 全部只读驱动/算法RAM镜像，不在UI线程发起I2C。 */
 void menu_status_refresh(void)
 {
     /* ---- Battery：电压/电流、最大容量、当前容量、健康度、学习状态 ---- */

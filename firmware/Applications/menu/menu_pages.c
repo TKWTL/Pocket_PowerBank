@@ -86,6 +86,7 @@ static const menu_tr_t menu_tr_table[] = {
     { "OFF",             "OFF",              "关" },
     { "On",              "On",               "开" },
     { "Off",             "Off",              "关" },
+    { "Auto",            "Auto",             "自动" },
     /* ---- 显示页：休眠 ---- */
     { "Auto Sleep",      "Auto Sleep",       "自动休眠" },
     { "None",            "None",             "不休眠" },
@@ -102,7 +103,8 @@ static const menu_tr_t menu_tr_table[] = {
     { "status.maxcap",   "Max: %.2f Wh",     "最大能量: %.2f Wh" },
     { "status.now",      "Now: %.2f Wh",     "当前能量: %.2f Wh" },
     { "status.health",   "Health: %.0f%%",   "健康度: %.0f%%" },
-    { "status.learn",    "Learn:%s",        "容量学习:%s" },
+    { "status.cycles",   "Cycles: %.2f",      "循环: %.2f" },
+    { "status.learn",    "Learn:%s",          "容量学习:%s" },
     { "learn.waiting",   "Waiting",          "等待" },
     { "learn.ing",       "Learning",         "学习中" },
     { "learn.done",      "Done",             "已完成" },
@@ -254,9 +256,10 @@ static int32_t s_time_hour = 0;     /* 时 0~23 */
 static int32_t s_time_day = 1;      /* 日 1~31 */
 static int32_t s_time_month = 1;    /* 月 1~12 */
 static int32_t s_time_year = 24;    /* 年 00~99（2000+） */
-static uint8_t s_rtc_charge = 0;    /* 备用电池充电：1=开 0=关（默认关，与驱动默认禁止充电一致） */
+static int32_t s_rtc_charge_mode = SD3078_BACKUP_CHARGE_AUTO;
+static const char * const s_rtc_charge_opts[] = { "Off", "On", "Auto" };
 
-/* 进入时间页：从 SD3078 驱动句柄镜像读当前时间（load_task 定期刷新），填充设置变量 */
+/* Time页非编辑态由 ui_task 500ms 调用：时间跟随驱动镜像，充电模式跟随算法状态。 */
 void menu_time_read(void)
 {
     s_time_sec   = SD3078_ReadSec();
@@ -265,53 +268,33 @@ void menu_time_read(void)
     s_time_day   = SD3078_ReadDay();
     s_time_month = SD3078_ReadMonth();
     s_time_year  = SD3078_ReadYear();
+    s_rtc_charge_mode = (int32_t)SD3078_AlgoGetBackupChargeMode();
 }
 
-/* 任一时间字段步进后：请求设置时间（写入 SD3078 驱动句柄，由 load_task 经
- * SD3078_TimeSetProcess 提交写回；星期保留，不在菜单中设置） */
+/* 菜单只产生 RAM 请求；RTC 的实时合并与 I2C 提交都在 sd3078_algo/load_task。 */
 static void time_apply(menu_item_t *it)
 {
-    i2c_status_type st = I2C_ERR_STEP_1;
-
-    /* 只提交刚修改的字段。load_task 真正写入前会重新读取硬件当前 RTC，
-     * 把这个字段覆盖进去，再一次性写满 7 字节，避免秒/分使用进入页面时的旧快照。 */
     if (it && it->value_ptr == &s_time_sec) {
-        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_SEC, (uint8_t)s_time_sec);
+        (void)SD3078_AlgoRequestTimeFieldSet(SD3078_TIME_FIELD_SEC, (uint8_t)s_time_sec);
     } else if (it && it->value_ptr == &s_time_min) {
-        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_MIN, (uint8_t)s_time_min);
+        (void)SD3078_AlgoRequestTimeFieldSet(SD3078_TIME_FIELD_MIN, (uint8_t)s_time_min);
     } else if (it && it->value_ptr == &s_time_hour) {
-        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_HOUR, (uint8_t)s_time_hour);
+        (void)SD3078_AlgoRequestTimeFieldSet(SD3078_TIME_FIELD_HOUR, (uint8_t)s_time_hour);
     } else if (it && it->value_ptr == &s_time_day) {
-        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_DAY, (uint8_t)s_time_day);
+        (void)SD3078_AlgoRequestTimeFieldSet(SD3078_TIME_FIELD_DAY, (uint8_t)s_time_day);
     } else if (it && it->value_ptr == &s_time_month) {
-        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_MONTH, (uint8_t)s_time_month);
+        (void)SD3078_AlgoRequestTimeFieldSet(SD3078_TIME_FIELD_MONTH, (uint8_t)s_time_month);
     } else if (it && it->value_ptr == &s_time_year) {
-        st = SD3078_RequestTimeFieldSet(SD3078_TIME_FIELD_YEAR, (uint8_t)s_time_year);
-    }
-
-    if (st == I2C_OK) {
-        /* load_task 10ms 状态机尽快处理 pending，不等下一次 500ms 周期。 */
-        pm_api_request_data_refresh();
+        (void)SD3078_AlgoRequestTimeFieldSet(SD3078_TIME_FIELD_YEAR, (uint8_t)s_time_year);
     }
 }
 
-/* 备用电池充电开关：直接写 SD3078 充电寄存器（限流电阻用配置宏 SD3078_CHARGE_RES_SEL） */
 static void rtc_charge_apply(menu_item_t *it)
 {
-    i2c_status_type st;
-    i2c_status_type lock_st;
-
     (void)it;
-    st = SD3078_Unlock();
-    if (st == I2C_OK) {
-        st = SD3078_ChargeSet(s_rtc_charge ? 1U : 0U, SD3078_CHARGE_RES_SEL);
-        lock_st = SD3078_Lock();
-        if (st == I2C_OK) st = lock_st;
-    }
-
-    /* 写失败时把 UI 开关恢复，避免界面状态与芯片实际状态相反。 */
-    if (st != I2C_OK) {
-        s_rtc_charge = s_rtc_charge ? 0U : 1U;
+    if (SD3078_AlgoSetBackupChargeMode(
+            (sd3078_backup_charge_mode_t)s_rtc_charge_mode) != I2C_OK) {
+        s_rtc_charge_mode = (int32_t)SD3078_AlgoGetBackupChargeMode();
     }
 }
 
@@ -324,146 +307,85 @@ static const menu_item_t menu_items_time[] = {
     MENU_ITEM_VALUE_("Day",   &s_time_day,   1, 31, 1, NULL, time_apply),
     MENU_ITEM_VALUE_("Month", &s_time_month, 1, 12, 1, NULL, time_apply),
     MENU_ITEM_VALUE_("Year",  &s_time_year,  0, 99, 1, NULL, time_apply),
-    /* 备用电池充电（SD3078 VBAT 充电电路，默认关） */
-    MENU_ITEM_TOGGLE_("Backup Charge", &s_rtc_charge, "On", "Off", rtc_charge_apply),
+    /* MS621FE 后备电池：Off / On / Auto（Auto=2.95V启充、3.10V停充） */
+    MENU_ITEM_ENUM_("Backup Charge", &s_rtc_charge_mode, s_rtc_charge_opts, 3, rtc_charge_apply),
 };
 MENU_PAGE_("Time", menu_page_time, menu_items_time);
 
-/* ==================== PowerBank → Protocol 子页（全部协议使能/失能） ==================== */
-/* 有单独输入/输出方向的协议拆成两个开关（AFC/SCP/VOOC/UFCS/PD）；
- * 仅单方向的（QC/FCP/PE/SFCP/SVOOC）不加后缀；PPS 只提供 PPS1/PPS3（PPS0/PPS2 始终不使用） */
-static uint8_t s_proto_pd_out = 1, s_proto_pd_in = 1;       /* PD source/sink */
-static uint8_t s_proto_pps1 = 1, s_proto_pps3 = 1;          /* PPS1/PPS3 */
-static uint8_t s_proto_qc = 1;                              /* QC（仅 source） */
-static uint8_t s_proto_fcp = 1;                             /* FCP（仅 source） */
-static uint8_t s_proto_afc_out = 1, s_proto_afc_in = 1;     /* AFC source/sink */
-static uint8_t s_proto_scp_out = 1, s_proto_scp_in = 1;     /* SCP source/sink */
-static uint8_t s_proto_pe = 1;                              /* PE（仅 source） */
-static uint8_t s_proto_sfcp = 1;                            /* SFCP（仅 source） */
-static uint8_t s_proto_vooc_out = 1, s_proto_vooc_in = 1;   /* VOOC source/sink */
-static uint8_t s_proto_svooc = 1;                           /* SVOOC（仅 source） */
-static uint8_t s_proto_ufcs_out = 1, s_proto_ufcs_in = 1;   /* UFCS source/sink */
-
-/* 任一协议开关翻转后：按当前 s_proto_* 状态整组写回 SW6306 */
+/* ==================== PowerBank → Protocol 子页 ====================
+ * 配置真实状态放在 sw6306_algo；菜单只修改配置镜像并发 request。 */
 static void proto_apply(menu_item_t *it)
 {
     (void)it;
-    if (!SW6306_IsInitialized()) {
-        return;
-    }
-    SW6306_ProtocolEnable(SW6306_PROTO_PD,    SW6306_PROTO_DIR_SOURCE, s_proto_pd_out);
-    SW6306_ProtocolEnable(SW6306_PROTO_PD,    SW6306_PROTO_DIR_SINK,   s_proto_pd_in);
-    SW6306_PPSEnable(SW6306_PPS_1, s_proto_pps1);
-    SW6306_PPSEnable(SW6306_PPS_3, s_proto_pps3);
-    SW6306_ProtocolEnable(SW6306_PROTO_QC,    SW6306_PROTO_DIR_SOURCE, s_proto_qc);
-    SW6306_ProtocolEnable(SW6306_PROTO_FCP,   SW6306_PROTO_DIR_SOURCE, s_proto_fcp);
-    SW6306_ProtocolEnable(SW6306_PROTO_AFC,   SW6306_PROTO_DIR_SOURCE, s_proto_afc_out);
-    SW6306_ProtocolEnable(SW6306_PROTO_AFC,   SW6306_PROTO_DIR_SINK,   s_proto_afc_in);
-    SW6306_ProtocolEnable(SW6306_PROTO_SCP,   SW6306_PROTO_DIR_SOURCE, s_proto_scp_out);
-    SW6306_ProtocolEnable(SW6306_PROTO_SCP,   SW6306_PROTO_DIR_SINK,   s_proto_scp_in);
-    SW6306_ProtocolEnable(SW6306_PROTO_PE,    SW6306_PROTO_DIR_SOURCE, s_proto_pe);
-    SW6306_ProtocolEnable(SW6306_PROTO_SFCP,  SW6306_PROTO_DIR_SOURCE, s_proto_sfcp);
-    SW6306_ProtocolEnable(SW6306_PROTO_VOOC,  SW6306_PROTO_DIR_SOURCE, s_proto_vooc_out);
-    SW6306_ProtocolEnable(SW6306_PROTO_VOOC,  SW6306_PROTO_DIR_SINK,   s_proto_vooc_in);
-    SW6306_ProtocolEnable(SW6306_PROTO_SVOOC, SW6306_PROTO_DIR_SOURCE, s_proto_svooc);
-    SW6306_ProtocolEnable(SW6306_PROTO_UFCS,  SW6306_PROTO_DIR_SOURCE, s_proto_ufcs_out);
-    SW6306_ProtocolEnable(SW6306_PROTO_UFCS,  SW6306_PROTO_DIR_SINK,   s_proto_ufcs_in);
+    SW6306_AlgoRequestProtocolApply();
 }
 
-/* 手动触发 PD/PPS 电流能力播发（Source Capability 重播，使已连接对端重新协商） */
 static void pps_broadcast_apply(menu_item_t *it)
 {
     (void)it;
-    if (SW6306_IsInitialized()) {
-        SW6306_PPSBroadcast();
-    }
+    SW6306_AlgoRequestPPSBroadcast();
 }
 
-/* 手动触发 UFCS 电流能力播发 */
 static void ufcs_broadcast_apply(menu_item_t *it)
 {
     (void)it;
-    if (SW6306_IsInitialized()) {
-        SW6306_UFCSBroadcast();
-    }
+    SW6306_AlgoRequestUFCSBroadcast();
 }
 
 static const menu_item_t menu_items_protocol[] = {
     MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_TOGGLE_("PD out",  &s_proto_pd_out,  "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("PD in",   &s_proto_pd_in,   "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("PD out",  &SW6306_AlgoConfig.pd_out,  "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("PD in",   &SW6306_AlgoConfig.pd_in,   "On", "Off", proto_apply),
     MENU_ITEM_ACTION_("PPS Broadcast", pps_broadcast_apply),   /* PPS 设置项之前：手动播发能力 */
-    MENU_ITEM_TOGGLE_("PPS1",    &s_proto_pps1,    "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("PPS3",    &s_proto_pps3,    "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("QC",      &s_proto_qc,      "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("FCP",     &s_proto_fcp,     "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("AFC out", &s_proto_afc_out, "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("AFC in",  &s_proto_afc_in,  "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("SCP out", &s_proto_scp_out, "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("SCP in",  &s_proto_scp_in,  "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("PE",      &s_proto_pe,      "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("SFCP",    &s_proto_sfcp,    "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("VOOC out",&s_proto_vooc_out,"On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("VOOC in", &s_proto_vooc_in, "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("SVOOC",   &s_proto_svooc,   "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("PPS1",    &SW6306_AlgoConfig.pps1,    "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("PPS3",    &SW6306_AlgoConfig.pps3,    "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("QC",      &SW6306_AlgoConfig.qc,      "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("FCP",     &SW6306_AlgoConfig.fcp,     "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("AFC out", &SW6306_AlgoConfig.afc_out, "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("AFC in",  &SW6306_AlgoConfig.afc_in,  "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("SCP out", &SW6306_AlgoConfig.scp_out, "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("SCP in",  &SW6306_AlgoConfig.scp_in,  "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("PE",      &SW6306_AlgoConfig.pe,      "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("SFCP",    &SW6306_AlgoConfig.sfcp,    "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("VOOC out",&SW6306_AlgoConfig.vooc_out,"On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("VOOC in", &SW6306_AlgoConfig.vooc_in, "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("SVOOC",   &SW6306_AlgoConfig.svooc,   "On", "Off", proto_apply),
     MENU_ITEM_ACTION_("UFCS Broadcast", ufcs_broadcast_apply), /* UFCS 设置项之前：手动播发能力 */
-    MENU_ITEM_TOGGLE_("UFCS out",&s_proto_ufcs_out,"On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("UFCS in", &s_proto_ufcs_in, "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("UFCS out",&SW6306_AlgoConfig.ufcs_out,"On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("UFCS in", &SW6306_AlgoConfig.ufcs_in, "On", "Off", proto_apply),
 };
 MENU_PAGE_("Protocol", menu_page_protocol, menu_items_protocol);
 
 /* ==================== PowerBank → PowerLimit 子页（输入/输出功率） ==================== */
-static int32_t s_out_power = 45;    /* 输出功率 5~55W，默认 45 */
-static int32_t s_in_power = 30;     /* 输入功率 5~36W，默认参考 SW6306_INPUT_POWER_MAX */
-
-static void out_power_apply(menu_item_t *it)
+static void power_apply(menu_item_t *it)
 {
     (void)it;
-    SW6306_SetMaxOutputPower((uint8_t)s_out_power);
-}
-
-static void in_power_apply(menu_item_t *it)
-{
-    (void)it;
-    SW6306_SetMaxInputPower((uint8_t)s_in_power);
+    SW6306_AlgoRequestPowerApply();
 }
 
 static const menu_item_t menu_items_powerlimit[] = {
     MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_VALUE_("Output", &s_out_power, 5, 55, 5, "W", out_power_apply),
-    MENU_ITEM_VALUE_("Input",  &s_in_power,  5, 36, 1, "W", in_power_apply),
+    MENU_ITEM_VALUE_("Output", &SW6306_AlgoConfig.output_power_w, 5, 55, 5, "W", power_apply),
+    MENU_ITEM_VALUE_("Input",  &SW6306_AlgoConfig.input_power_w,  5, 36, 1, "W", power_apply),
 };
 MENU_PAGE_("PowerLimit", menu_page_powerlimit, menu_items_powerlimit);
 
 /* ==================== PowerBank → Battery 子页（容量学习 / 健康度参考） ==================== */
-static uint8_t s_learn_enable = 0;   /* 容量学习武装开关：默认关 */
-
-/* 容量学习武装开关：开→LEARNEN 使能 + 清历史完成标志（实际在 UVLO 后重新充电时启动）；
- * 关→关闭 LEARNEN。 */
 static void learn_apply(menu_item_t *it)
 {
     (void)it;
-    if (SW6306_IsInitialized()) {
-        SW6306_CapacityLearningSet(s_learn_enable ? 1U : 0U);
-    }
+    SW6306_AlgoRequestCapacityLearning();
 }
 
-/* 记录当前库仑计最大能量作为 SOH（健康度）参考容量（健康度分母 = 当前实测最大能量 → 显示约 100%） */
 static void record_soh_apply(menu_item_t *it)
 {
     (void)it;
-    if (SW6306_IsInitialized()) {
-        float wh = SW6306_ReadMaxEnergy_mWh() / 1000.0f;
-        if (wh > 0.1f) {
-            nvm_set_factory_capacity_wh(wh);
-            (void)nvm_save();
-        }
-    }
+    SW6306_AlgoRequestRecordFactoryCapacity();
 }
 
 static const menu_item_t menu_items_battery_set[] = {
     MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_TOGGLE_("Learn Waiting", &s_learn_enable, "On", "Off", learn_apply),
+    MENU_ITEM_TOGGLE_("Learn Waiting", &SW6306_AlgoConfig.learn_enable, "On", "Off", learn_apply),
     MENU_ITEM_ACTION_("Record SOH",    record_soh_apply),
 };
 MENU_PAGE_("Battery", menu_page_battery_set, menu_items_battery_set);
@@ -477,7 +399,7 @@ MENU_PAGE_("Battery", menu_page_battery_set, menu_items_battery_set);
 static void sw6306_reinit_apply(menu_item_t *it)
 {
     (void)it;
-    SW6306_MarkUninitialized();
+    SW6306_AlgoRequestReinit();
 }
 
 static const menu_item_t menu_items_sw6306[] = {
@@ -519,6 +441,7 @@ MENU_PAGE_("Settings", menu_page_settings, menu_items_settings);
 static char menu_status_maxcap[24];      /* 库仑计最大能量 */
 static char menu_status_presentcap[24];  /* 库仑计当前能量 */
 static char menu_status_health[24];      /* 健康度 */
+static char menu_status_cycles[24];      /* 等效完整循环 EFC */
 static char menu_status_learn[24];       /* 容量学习状态 */
 static char menu_status_accel_x[20], menu_status_accel_y[20], menu_status_accel_z[20];
 static char menu_status_time[16];        /* 时分秒 */
@@ -533,6 +456,7 @@ static const menu_item_t menu_items_status_battery[] = {
     MENU_ITEM_INFO_(menu_status_maxcap),    /* 库仑计最大能量 */
     MENU_ITEM_INFO_(menu_status_presentcap),/* 库仑计当前能量 */
     MENU_ITEM_INFO_(menu_status_health),    /* 健康度 */
+    MENU_ITEM_INFO_(menu_status_cycles),    /* 等效完整循环 */
     MENU_ITEM_INFO_(menu_status_learn),     /* 容量学习状态 */
 };
 MENU_PAGE_("Battery", menu_page_status_battery, menu_items_status_battery);
@@ -576,15 +500,14 @@ void menu_status_refresh(void)
                  SW6306_ReadMaxEnergy_mWh() / 1000.0f);
         snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), menu_tr("status.now"),
                  SW6306_ReadRemainEnergy_mWh() / 1000.0f);
-        {
-            float factory_wh = nvm_get_factory_capacity_wh();
-            if (nvm_is_valid() && factory_wh > 0.1f) {
-                /* 健康度 = 当前最大能量 / NVM 出厂能量 × 100% */
-                snprintf(menu_status_health, sizeof(menu_status_health), menu_tr("status.health"),
-                         SW6306_ReadMaxEnergy_mWh() / (factory_wh * 1000.0f) * 100.0f);
-            } else {
-                snprintf(menu_status_health, sizeof(menu_status_health), "--");
-            }
+        if (nvm_is_valid()) {
+            snprintf(menu_status_health, sizeof(menu_status_health), menu_tr("status.health"),
+                     SW6306_AlgoGetSOHPercent());
+            snprintf(menu_status_cycles, sizeof(menu_status_cycles), menu_tr("status.cycles"),
+                     SW6306_AlgoGetEquivalentCycles());
+        } else {
+            snprintf(menu_status_health, sizeof(menu_status_health), "--");
+            snprintf(menu_status_cycles, sizeof(menu_status_cycles), "--");
         }
         /* 容量学习状态：0xA2 两位（bit5=END 高位 / bit6=ING 低位）→ 3 态 + Unknown */
         {
@@ -603,6 +526,7 @@ void menu_status_refresh(void)
         snprintf(menu_status_maxcap,    sizeof(menu_status_maxcap),    "--");
         snprintf(menu_status_presentcap,sizeof(menu_status_presentcap),"--");
         snprintf(menu_status_health,    sizeof(menu_status_health),    "--");
+        snprintf(menu_status_cycles,    sizeof(menu_status_cycles),    "--");
         snprintf(menu_status_learn,     sizeof(menu_status_learn),     "--");
     }
 

@@ -664,8 +664,11 @@ SD3078_RET SD3078_Init(SD3078_NOARG)
     i2c_status_type st;
     i2c_status_type lock_st;
 
-    /* 首次写之前快照 CTR1，保留 RTCF/PMF/OSF 上电状态。 */
+    /* 首次写之前快照 CTR1，保留 RTCF/PMF/OSF 上电状态。
+     * ByteRead 是驱动内部底层原语，本身不加锁；初始化入口显式保护这笔事务。 */
+    SD3078_MUTEX_TAKE;
     st = SD3078_ByteRead(SD3078_CTRG_CTR1, &SD3078_Status.ctr1);
+    SD3078_MUTEX_GIVE;
     if (st != I2C_OK) return st;
     if (SD3078_Status.ctr1 == 0xFFU) return I2C_ERR_ADDR;
 
@@ -706,7 +709,9 @@ SD3078_RET SD3078_FullInit(SD3078_NOARG)
     i2c_status_type st;
     i2c_status_type lock_st;
 
+    SD3078_MUTEX_TAKE;
     st = SD3078_ByteRead(SD3078_CTRG_CTR1, &SD3078_Status.ctr1);
+    SD3078_MUTEX_GIVE;
     if (st != I2C_OK) return st;
     if (SD3078_Status.ctr1 == 0xFFU) return I2C_ERR_ADDR;
 

@@ -51,12 +51,12 @@ extern C {
 #endif
 
 
-/* IBAT 标定：芯片在 5mΩ 下名义为 5mA/LSB；本板 3mΩ 的默认斜率约 8.333mA/LSB。
- * 零点用 int16 原始码修正，斜率用 float；输出端 VBUS/IBUS 不参与此校准。 */
-#define SW_BATT_RSHUNT                  3.0f
-#define SW6306_BATT_RSHUNT_NOMINAL      5.0f
-#define SW6306_IBAT_SLOPE_NOMINAL       5.0f
-#define SW6306_IBAT_SLOPE_DEFAULT       (SW6306_IBAT_SLOPE_NOMINAL * SW6306_BATT_RSHUNT_NOMINAL / SW_BATT_RSHUNT)
+/* 电池端感测电阻（单位:mΩ）
+ *  - SW_BATT_RSHUNT            ：实际硬件值（校准变量初值）
+ *  - SW6306_BATT_RSHUNT_NOMINAL：芯片内部标定基准（IBAT ADC 5mA/LSB 对应 5mΩ，勿改）
+ * 输出端（VBUS）因高压与协议限流的准确性固定用 5mΩ，不做校准。 */
+#define SW_BATT_RSHUNT                  3.0f          //电池电流路径上的感测电阻值（实际硬件）
+#define SW6306_BATT_RSHUNT_NOMINAL      5.0f          //芯片内部电池端标定基准（mΩ）
     
 /* 按实际 NTC 改这三个参数：
  *  - SW6306_NTC_R25_OHM    ：25°C 时阻值（常见 10k / 100k）
@@ -1337,9 +1337,10 @@ float SW6306_TNTC_Calc(void);                   //由 Rntc 用 Beta 公式算温
 float SW6306_CalcNTCTemp_C(void);               //计算 NTC 温度（°C，Beta 公式；独立 API，无 FPU 平台可裁剪）
 float SW6306_ReadNTCTemp(void);                 //读取句柄中的 NTC 温度（°C，Beta 公式计算）
 SW6306_RET SW6306_NTCTempLoad(SW6306_NOARG);    //计算并缓存 NTC 温度到句柄（须先 ADCLoad+StatusLoad）
-/* IBAT 校准：corrected_mA = max(raw - zero_raw, 0) * slope_ma_per_lsb。
- * slope 同时缩放电池限流与库仑计能量值；zero 只修正实时 ADC 原始码。 */
-SW6306_RET SW6306_SetIBATCalibration(SW6306_ARGS(int16_t zero_raw, float slope_ma_per_lsb));
+/* 电池端感测电阻校准（芯片按 SW6306_BATT_RSHUNT_NOMINAL 标定，实际硬件不同时用本 API 重新校准）：
+ * 影响 IBAT 读数/电池限流读数/库仑计能量读数（× NOMINAL/实际）与下次 Init 写入的电池限流值（× 实际/NOMINAL）。 */
+SW6306_RET SW6306_SetBattRShunt(SW6306_ARGS(float rshunt_mohm));  //设置实际电池端感测电阻（mΩ，拒绝≤0.1）
+float SW6306_GetBattRShunt(void);                                 //读取当前校准值（mΩ）
 //状态相关操作
 SW6306_RET SW6306_StatusLoad(SW6306_NOARG);   //将SW6306的各种状态读取到镜像寄存器(0x12,0x14,0x15,0x18,0x1A,0x2A,0x2B,0x2C)
 uint8_t SW6306_IsWLEDON(void);                  //SW6306 WLED是否打开

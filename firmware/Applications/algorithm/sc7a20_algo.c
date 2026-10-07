@@ -1,5 +1,5 @@
 /*
- * sc7a20_algo.c - low-rate up/down orientation estimator
+ * sc7a20_algo.c - low-rate 180-degree orientation estimator
  */
 #include "sc7a20_algo.h"
 
@@ -14,14 +14,15 @@ void SC7A20_AlgoInit(void)
     s_candidate_count = 0U;
 }
 
-void SC7A20_AlgoUpdate(float y_mg)
+void SC7A20_AlgoUpdate(float x_mg)
 {
     sc7a20_orientation_t next;
 
-    if (y_mg >= SC7A20_ALGO_ENTER_MG) {
-        next = SC7A20_ORIENT_UP;
-    } else if (y_mg <= -SC7A20_ALGO_ENTER_MG) {
-        next = SC7A20_ORIENT_DOWN;
+    /* 本机安装方向：X≈-1g为正常，X≈+1g为倒置；中间区域不推进计时。 */
+    if (x_mg <= -SC7A20_ALGO_ENTER_MG) {
+        next = SC7A20_ORIENT_NORMAL;
+    } else if (x_mg >= SC7A20_ALGO_ENTER_MG) {
+        next = SC7A20_ORIENT_FLIPPED;
     } else {
         s_candidate = SC7A20_ORIENT_UNKNOWN;
         s_candidate_count = 0U;

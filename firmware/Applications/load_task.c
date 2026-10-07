@@ -43,9 +43,10 @@ static void sd3078_try_init(void)
         }
         s_nvm_ready = 1U;
 
-        /* IBAT 校准在 SW6306 业务算法开始前装入驱动。 */
-        SW6306_SetIBATCalibration(nvm_get_ibat_zero_raw(),
-                                  nvm_get_ibat_slope_ma_per_lsb());
+        /* 持久化校准值在业务算法开始前装入各自驱动。 */
+        SW6306_SetBattRShunt(nvm_get_shunt_mohm());
+        SC7A20_SetXCalibration(nvm_get_sc7a20_x_zero_raw(),
+                               nvm_get_sc7a20_x_slope_mg_per_lsb());
     }
 
     /* SD3078_Init 会把充电寄存器恢复为关闭；每次驱动重新初始化后都让
@@ -210,7 +211,7 @@ void load_task(void *pvParameters)
             if (SC7A20_IsInitialized()) {
                 SC7A20_AccelLoad();
                 if (SC7A20_IsInitialized()) {
-                    SC7A20_AlgoUpdate(SC7A20_ReadY_mg());
+                    SC7A20_AlgoUpdate(SC7A20_ReadX_mg());
                 }
             }
         }

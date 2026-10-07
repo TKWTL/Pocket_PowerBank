@@ -14,8 +14,8 @@ extern "C" {
 
 typedef enum {
     SC7A20_ORIENT_UNKNOWN = 0,
-    SC7A20_ORIENT_UP,
-    SC7A20_ORIENT_DOWN
+    SC7A20_ORIENT_NORMAL,     /* X ≈ -1g：当前显示方向 */
+    SC7A20_ORIENT_FLIPPED     /* X ≈ +1g：翻转180° */
 } sc7a20_orientation_t;
 
 #define SC7A20_ALGO_SAMPLE_MS         200U   /* 5Hz application sampling */
@@ -23,7 +23,7 @@ typedef enum {
 #define SC7A20_ALGO_CONFIRM_SAMPLES   10U    /* 10 further 200ms samples = 2s stable */
 
 void SC7A20_AlgoInit(void);
-void SC7A20_AlgoUpdate(float y_mg);
+void SC7A20_AlgoUpdate(float x_mg);
 sc7a20_orientation_t SC7A20_AlgoGetOrientation(void);
 
 #ifdef __cplusplus

@@ -387,9 +387,10 @@ SC7A20_RET SC7A20_AccelLoad(SC7A20_NOARG);    //读取三轴原始数据镜像�
 int16_t SC7A20_ReadX(void);                    //读取X轴原始数据
 int16_t SC7A20_ReadY(void);                    //读取Y轴原始数据
 int16_t SC7A20_ReadZ(void);                    //读取Z轴原始数据
-float SC7A20_ReadX_mg(void);                   //读取X轴加速度（单位：mg）
+float SC7A20_ReadX_mg(void);                   //读取X轴加速度（单位：mg，应用X轴零点+斜率校准）
 float SC7A20_ReadY_mg(void);                   //读取Y轴加速度（单位：mg）
 float SC7A20_ReadZ_mg(void);                   //读取Z轴加速度（单位：mg）
+void SC7A20_SetXCalibration(int16_t zero_raw, float slope_mg_per_lsb); //X轴校准：(right_aligned_raw-zero)*slope
 
 //温度操作
 SC7A20_RET SC7A20_TempLoad(SC7A20_NOARG);      //读取温度原始数据镜像（0x0C/0x0D）

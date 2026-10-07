@@ -62,7 +62,7 @@ static void menu_redraw_handler(void)
     menu_ui_redraw();
 }
 
-/* SC7A20 只决定上下方向；GC9D01 的 1/3 模式均保持 160x40，仅相差180°。 */
+/* SC7A20 X轴决定180°方向；GC9D01 的 1/3 模式均保持160x40。 */
 static void ui_auto_rotate(void)
 {
     static sc7a20_orientation_t applied = SC7A20_ORIENT_UNKNOWN;
@@ -72,7 +72,7 @@ static void ui_auto_rotate(void)
         return;
     }
 
-    GC9D01_rotation((orientation == SC7A20_ORIENT_DOWN) ? 3U : 1U);
+    GC9D01_rotation((orientation == SC7A20_ORIENT_FLIPPED) ? 3U : 1U);
     applied = orientation;
     lv_obj_invalidate(lv_screen_active());
 }

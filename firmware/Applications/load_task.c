@@ -205,7 +205,9 @@ void load_task(void *pvParameters)
             if (st != I2C_OK) s_sd3078_status = st;
         }
 
-        /* 5Hz SC7A20：只有本周期路径推进姿态计时，确保连续约2s才翻转。 */
+        /* 5Hz 姿态采样：只有本周期路径推进姿态计时，确保连续约2s才翻转。
+         * （传感器 ODR=SC7A20_DEFAULT_ODR(5Hz 约定)=10Hz 输出，这里 200ms 读一次，
+         *  等效软件采样 5Hz。） */
         if (++sc7_cnt >= (SC7A20_ALGO_SAMPLE_MS / 10U)) {
             sc7_cnt = 0U;
             if (SC7A20_IsInitialized()) {
@@ -225,7 +227,7 @@ void load_task(void *pvParameters)
             sd3078_try_init();
 
             if (!SC7A20_IsInitialized()) {
-                SC7A20_Init();       /* 传感器10Hz，应用层按5Hz读取 */
+                SC7A20_Init();       /* ODR=SC7A20_DEFAULT_ODR(5Hz)，应用层按 200ms 读取 */
                 SC7A20_AlgoInit();
                 exint_flag_clear(EXINT_LINE_8);
                 NVIC_ClearPendingIRQ(EXINT9_5_IRQn);

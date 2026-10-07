@@ -62,18 +62,31 @@ static void menu_redraw_handler(void)
     menu_ui_redraw();
 }
 
-/* SC7A20 X轴决定180°方向；GC9D01 的 1/3 模式均保持160x40。 */
+/* 屏幕方向 = 重力方向 XOR Display Flip 开关。
+ * 开关（Settings→Display→Display Flip）用于"设备装反/想固定另一边"时把方向反过来；
+ * 混合方向未知时保持上一次的旋转，避免上电瞬间闪一下。 */
 static void ui_auto_rotate(void)
 {
-    static sc7a20_orientation_t applied = SC7A20_ORIENT_UNKNOWN;
+    static uint8_t applied_valid = 0;
+    static uint8_t applied_flipped = 0;
     sc7a20_orientation_t orientation = SC7A20_AlgoGetOrientation();
+    uint8_t flipped;
 
-    if (orientation == applied || orientation == SC7A20_ORIENT_UNKNOWN) {
+    if (orientation == SC7A20_ORIENT_UNKNOWN) {
+        return;
+    }
+    /* 重力方向 XOR 开关：开关为 ON 时，NORMAL 也按翻转显示 */
+    flipped = (uint8_t)((orientation == SC7A20_ORIENT_FLIPPED) ^
+                        (menu_display_get_flip() != 0U));
+
+    if (applied_valid && flipped == applied_flipped) {
         return;
     }
 
-    GC9D01_rotation((orientation == SC7A20_ORIENT_FLIPPED) ? 3U : 1U);
-    applied = orientation;
+    /* GC9D01 的 1/3 模式均保持 160x40（横竖分辨率不变，只翻转 180°） */
+    GC9D01_rotation(flipped ? 3U : 1U);
+    applied_flipped = flipped;
+    applied_valid = 1U;
     lv_obj_invalidate(lv_screen_active());
 }
 
@@ -105,11 +118,21 @@ static app_action_t key_event(KeyIndex_t k, app_action_t single, app_action_t db
 
 static app_action_t ui_scan_action(void)
 {
-    /* 菜单态：仅单击（导航/确认），双击/长按不进菜单 */
+    /* 菜单态：仅单击（导航/确认），双击/长按不进菜单。
+     * 显示翻转（Settings→Display→Display Flip）后画面 180°，按键在视觉上左右对调：
+     * 菜单里把 PREV/NEXT 互换，让"屏幕上左/上那个键"仍然是上一项。
+     * 只换菜单态：应用态（主界面等）的 MENU/NEXT 语义是 HOME/LED，与屏幕方向无关。 */
     if (menu_is_active()) {
-        if (KEY_GetDASClick(KeyIndex_MENU)) { KEY_ClearEdge(KeyIndex_MENU); return APP_ACTION_UP; }
+        uint8_t flip = (menu_display_get_flip() != 0U);
+        if (KEY_GetDASClick(KeyIndex_MENU)) {
+            KEY_ClearEdge(KeyIndex_MENU);
+            return flip ? APP_ACTION_DOWN : APP_ACTION_UP;
+        }
         if (KEY_GetDASClick(KeyIndex_CONF)) { KEY_ClearEdge(KeyIndex_CONF); return APP_ACTION_ENTER; }
-        if (KEY_GetDASClick(KeyIndex_NEXT)) { KEY_ClearEdge(KeyIndex_NEXT); return APP_ACTION_DOWN; }
+        if (KEY_GetDASClick(KeyIndex_NEXT)) {
+            KEY_ClearEdge(KeyIndex_NEXT);
+            return flip ? APP_ACTION_UP : APP_ACTION_DOWN;
+        }
         KEY_ClearEdge(KeyIndex_MENU);
         KEY_ClearEdge(KeyIndex_CONF);
         KEY_ClearEdge(KeyIndex_NEXT);

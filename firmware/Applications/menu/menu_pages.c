@@ -83,6 +83,7 @@ static const menu_tr_t menu_tr_table[] = {
     { "Color",           "Color",            "颜色" },
     { "Auto Sleep",      "Auto Sleep",       "自动休眠" },
     { "None",            "None",             "不休眠" },
+    { "Display Flip",    "Display Flip",     "显示翻转" },
     { "Light",           "Light",            "浅色" },
     { "Dark",            "Dark",             "深色" },
     /* ---- Time 页 ---- */
@@ -199,6 +200,9 @@ static uint8_t s_theme_toggle = 0;          /* 0=深色 1=浅色 */
 static int32_t s_theme_color_idx = 0;       /* 主题色在色板中的下标 */
 static int32_t s_backlight = 8;             /* 背光亮度 1~16，默认 8 */
 static int32_t s_sleep_idx = 4;             /* 自动休眠：ENUM 选项下标（默认 30s），0=不休眠 */
+/* 显示翻转开关：0=关（只按重力方向翻转）1=开（再翻转一次，方向判断反过来）。
+ * 与背光一样是运行时设置，未持久化。 */
+static uint8_t s_display_flip = 0;
 
 /* 自动休眠选项文本（元素经 menu_tr 本地化；"None" 见 menu_ui.c 的 i18n 表） */
 static const char * const s_sleep_opts[] = {
@@ -251,6 +255,24 @@ static void backlight_apply(menu_item_t *it)
     menu_backlight_apply();
 }
 
+/* Display Flip：只改标志，实际旋转由 ui_task 的 ui_auto_rotate() 每帧按
+ * (开关状态 XOR 重力方向) 应用，所以这里不需要直接动 GC9D01。 */
+void menu_display_set_flip(uint8_t on)
+{
+    s_display_flip = (on != 0U) ? 1U : 0U;
+}
+
+uint8_t menu_display_get_flip(void)
+{
+    return s_display_flip;
+}
+
+static void display_flip_apply(menu_item_t *it)
+{
+    (void)it;
+    menu_display_set_flip(s_display_flip);
+}
+
 /* ==================== 页面前向声明（套娃：任意页面可引用任意页面，无顺序限制）
  * 注意：这里用不带 static 的试探性定义，与下方 MENU_PAGE_* 宏展开的
  * 正式定义（也不带 static）链接属性一致；链接器合并为同一份 RAM 对象。 */
@@ -268,6 +290,10 @@ static const menu_item_t menu_items_display[] = {
     MENU_ITEM_TOGGLE_("Theme", &s_theme_toggle, "Light", "Dark", theme_toggle_apply),
     MENU_ITEM_VALUE_("Color", &s_theme_color_idx, 0, MENU_PALETTE_COUNT - 1, 1, NULL, theme_color_apply),
     MENU_ITEM_ENUM_("Auto Sleep", &s_sleep_idx, s_sleep_opts, 9, sleep_apply),
+    /* 显示翻转：ON=把当前方向再翻 180°。
+     * 画面倒过来后按键在视觉上左右对调，所以菜单里 PREV/NEXT 会互换语义
+     * （见 ui_task 的 ui_scan_action）；主界面的 MENU/NEXT 语义是 HOME/LED，不换。 */
+    MENU_ITEM_TOGGLE_("Display Flip", &s_display_flip, "On", "Off", display_flip_apply),
 };
 MENU_PAGE_("Display", menu_page_display, menu_items_display);
 

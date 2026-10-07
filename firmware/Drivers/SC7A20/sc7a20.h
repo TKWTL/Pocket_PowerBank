@@ -40,7 +40,7 @@ extern "C" {
 #endif
 
 //加速度计默认配置（可在初始化后按需用SC7A20_SetODR/SetFullScale等修改）
-#define SC7A20_DEFAULT_ODR            SC7A20_ODR_10HZ    //10Hz：应用层5Hz读取姿态；DeepSleep前仍由低功耗流程关闭
+#define SC7A20_DEFAULT_ODR            SC7A20_ODR_5HZ     //5Hz：姿态只需 5Hz（应用层 200ms 读一次）
 #define SC7A20_DEFAULT_FULLSCALE      SC7A20_FS_2G       //默认量程
 #define SC7A20_DEFAULT_HIGHRES        1                  //1=12bit高精度输出（HR），0=10bit
 #define SC7A20_DEFAULT_BDU            1                  //1=块数据更新（读LSB+MSB期间不更新）
@@ -254,6 +254,11 @@ struct SC7A20_StatusTypedef
 //输出数据率选择（ODR3~ODR0）
 #define SC7A20_ODR_POWERDOWN         0x00U//电源关断
 #define SC7A20_ODR_1HZ               0x10U//1Hz
+/* 5Hz：本工程要求（比 10Hz 省电，姿态判定 5Hz 足够）。SC7A20/LIS2DH12 的 ODR 档位
+ * 从 10Hz 直接跳到 1Hz，没有硬件 5Hz —— 因此"5Hz"由软件节流实现：传感器按 10Hz
+ * 输出，应用层每 200ms（SC7A20_ALGO_SAMPLE_MS）读一次，等效软件采样 5Hz。
+ * 注意：不要再编一个 0x25 之类的档位码。 */
+#define SC7A20_ODR_5HZ               SC7A20_ODR_10HZ
 #define SC7A20_ODR_10HZ              0x20U//10Hz
 #define SC7A20_ODR_25HZ              0x30U//25Hz
 #define SC7A20_ODR_50HZ              0x40U//50Hz

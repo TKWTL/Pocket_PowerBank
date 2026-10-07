@@ -32,6 +32,12 @@ void menu_time_read(void);
 /* 应用当前背光亮度（1~16 → TMR1_CH4 PWM）；开机时调用一次 */
 void menu_backlight_apply(void);
 
+/* 显示翻转开关（Settings→Display→Display Flip）：与背光一样是运行时设置，不持久化。
+ * 关=按重力方向自动翻转；开=在当前方向上再翻 180°（方向判断反过来）。
+ * ui_task 的 ui_auto_rotate() 每帧按 (开关 XOR 重力方向) 应用旋转。 */
+void menu_display_set_flip(uint8_t on);
+uint8_t menu_display_get_flip(void);
+
 #ifdef __cplusplus
 }
 #endif

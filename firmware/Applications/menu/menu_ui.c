@@ -613,11 +613,32 @@ static bool s_icon_anim_was_active;/* 图标动画上一帧是否在动（结束
 
 /* 按语言返回字体（menu_pages.c 实现，全局共享：菜单渲染 + 主界面都用） */
 
+/* Return（MENU_ITEM_BACK）用主题色；其余条目用普通文字色。
+ * 只看条目类型，不区分选中/未选中——所以光标移到别处、Return 落到左上/右下角
+ * 或动画途中，它仍然是主题色。 */
+static lv_color_t item_color(const menu_item_t *it)
+{
+    return (it && it->type == MENU_ITEM_BACK) ? menu_theme_get()->primary
+                                              : menu_theme_get()->text;
+}
+
+/* 取某页某索引的条目（越界返回 NULL） */
+static const menu_item_t *page_item(const menu_page_t *pg, uint8_t index)
+{
+    if (!pg || index >= pg->item_count) {
+        return NULL;
+    }
+    return &pg->items[index];
+}
+
 /* 主题应用（文本页 + 图标页共用）：放在图标页变量定义之后，
- * 因为图标页对象（s_icons / s_icon_hint / s_icon_clock）在本分区声明。 */
-static void apply_theme(void)
+ * 因为图标页对象（s_icons / s_icon_hint / s_icon_clock）在本分区声明。
+ * pg/index 必须是本次 redraw 实际在用的那一份（不能回头读 menu_current_item()：
+ * 页面已切换但菜单状态尚未更新时，它会返回旧页条目，导致新页首项被误染主题色）。 */
+static void apply_theme(const menu_page_t *pg, uint8_t index)
 {
     const menu_theme_t *t = menu_theme_get();
+    uint8_t n = pg ? pg->item_count : 0;
     uint8_t i;
 
     /* 关键：bg_opa 默认是透明（LV_STYLE_BG_OPA 默认 0），
@@ -638,21 +659,31 @@ static void apply_theme(void)
     /* 主题色（primary，可改）：菜单名称与页码，使 Color 切换可见 */
     lv_obj_set_style_text_color(s_header, t->primary, 0);
     lv_obj_set_style_text_color(s_indicator, t->primary, 0);
-    /* 上一项/下一项：灰色（次要文字） */
-    lv_obj_set_style_text_color(s_item_prev, t->text_sec, 0);
-    lv_obj_set_style_text_color(s_item_next, t->text_sec, 0);
-    lv_obj_set_style_text_color(s_item_prev_in, t->text_sec, 0);
-    lv_obj_set_style_text_color(s_item_next_in, t->text_sec, 0);
+    /* 上一项/下一项：普通条目灰色（次要文字）；Return 用主题色，
+     * 所以光标移开后左上/右下角的 Return 仍是主题色（用户要求选中/未选中都跟随）。 */
+    if (n > 1) {
+        uint8_t ip = (uint8_t)((index + n - 1U) % n);
+        uint8_t in = (uint8_t)((index + 1U) % n);
+        const menu_item_t *itp = page_item(pg, ip);
+        const menu_item_t *itn = page_item(pg, in);
+        lv_obj_set_style_text_color(s_item_prev,    item_color(itp), 0);
+        lv_obj_set_style_text_color(s_item_next,    item_color(itn), 0);
+        lv_obj_set_style_text_color(s_item_prev_in, item_color(itp), 0);
+        lv_obj_set_style_text_color(s_item_next_in, item_color(itn), 0);
+    } else {
+        lv_obj_set_style_text_color(s_item_prev, t->text_sec, 0);
+        lv_obj_set_style_text_color(s_item_next, t->text_sec, 0);
+        lv_obj_set_style_text_color(s_item_prev_in, t->text_sec, 0);
+        lv_obj_set_style_text_color(s_item_next_in, t->text_sec, 0);
+    }
     /* 当前条目：静止高亮；滑动动画中灰色（防止动画期间任何 redraw 把
      * s_item/s_item_in 刷回高亮，造成新旧选中项同时高亮——
      * 高亮只允许出现在静止态的中间项）。
-     * Return（MENU_ITEM_BACK）静止时用主题色 primary，"<" 与文字同一 label 一起变色。 */
-    {
-        const menu_item_t *mi = menu_current_item();
-        lv_color_t hl = (mi && mi->type == MENU_ITEM_BACK) ? t->primary : t->text;
-        lv_obj_set_style_text_color(s_item, s_sliding ? t->text_sec : hl, 0);
-    }
-    lv_obj_set_style_text_color(s_item_in, s_sliding ? t->text_sec : t->text, 0);
+     * Return（MENU_ITEM_BACK）用主题色 primary，"<" 与文字同一 label 一起变色。 */
+    lv_obj_set_style_text_color(s_item,
+        s_sliding ? t->text_sec : item_color(page_item(pg, index)), 0);
+    lv_obj_set_style_text_color(s_item_in,
+        s_sliding ? t->text_sec : item_color(page_item(pg, index)), 0);
     /* 图标页顶部文字条：名称与时间始终高亮（主题色 primary） */
     lv_obj_set_style_text_color(s_icon_hint, t->primary, 0);
     lv_obj_set_style_text_color(s_icon_clock, t->primary, 0);
@@ -983,7 +1014,14 @@ void menu_ui_redraw(void)
     bool changed, page_changed, icon_page;
     char buf[32];
 
-    apply_theme();
+    /* 用本次 redraw 的 (pg, index) 上色：不能让它自己回头读 menu_current_item()，
+     * 否则页面已切换、菜单状态未更新的窗口里会取到旧页条目（曾导致 Settings→
+     * PowerBank 首项被误染主题色）。
+     * s_last_page 必须先跟上本帧的页：下面 page_changed 靠它判断，若这里还留着
+     * 上一页，本次进入新页会被当成"同页变化"，snap_static 不执行 → 中间项文本与
+     * 颜色停在上一页内容（返回子页后"又是白色/颜色不刷新"就是这个原因）。 */
+    s_last_page = pg;
+    apply_theme(pg, st->index);
 
     icon_page = st->active && pg && pg->type == MENU_PAGE_ICON
                 && pg->icons && pg->item_count > 0;

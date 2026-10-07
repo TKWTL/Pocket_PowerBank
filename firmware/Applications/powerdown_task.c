@@ -152,11 +152,6 @@ static void pm_enter_deep_sleep(void)
         }
     }
 
-    /* ⓪ SC7A20 停机：ODR=0000（Power-down，约 0.5uA）。
-     * 必须在 sleep_gate 置位之前做——置位后 load_task 不再发起总线事务，
-     * 这里就成了休眠前最后一次 I2C 写。唤醒后由 ⑤ 恢复 ODR。 */
-    (void)SC7A20_SetODR(SC7A20_ODR_POWERDOWN);
-
     /* ① 睡眠总线门控：置位 → load/SW6306 任务停止发起新总线读写（下一轮让出） */
     pm_api_sleep_gate_set(1);
 
@@ -275,14 +270,6 @@ static void pm_enter_deep_sleep(void)
 
     /* 解除睡眠门控：load 类任务恢复总线读写 */
     pm_api_sleep_gate_set(0);
-
-    /* ⑤ 恢复 SC7A20 输出。
-     * 注意不能用 SC7A20_SetODR()：休眠时写的是 CTRL_REG1=0x00，轴使能位（XEN/YEN/ZEN）
-     * 也一起被清零，而 SetODR 只改 ODR 位 → 唤醒后 ODR 有了但三轴仍是关的，读回 0。
-     * 这里直接 SC7A20_Init()：一次写回 ODR + 三轴使能 + 量程/BDU/HR，并重建振动窗口。
-     * 姿态算法状态不动：即使镜像里还留着休眠前的旧样本，也要连续 10 次（约 2s）
-     * 反向读数才会翻转，单次旧样本不会误触发。 */
-    (void)SC7A20_Init();
 }
 
 static void pm_enter_standby(void)

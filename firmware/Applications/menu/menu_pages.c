@@ -8,6 +8,7 @@
  *     引用子页即实现套娃。
  *
  * 配置宏见 menu.h（MENU_ITEM_* / MENU_PAGE_*）。
+ * i18n（menu_tr / 语言状态 / 字体选择）已移到 menu_ui.c，本文件只声明菜单树。
  */
 #include <string.h>
 #include "menu_pages.h"
@@ -20,161 +21,13 @@
 
 /* ---------- 状态页实时信息缓冲区（ui_task 定时更新） ---------- */
 char menu_status_bat[24] = "--.-V --.-A";
-
-/* ==================== 国际化（i18n）语言表 ====================
- * 键 = 英文文本（menu_pages.c 里所有 label/title/toggle 值直接用英文作键）。
- * menu_tr(key)：英文态返回 en、中文态返回 zh、未配置回退 key 本身。
- * 中文字库（14/12px 部分字符集）待全部文案确认后生成，生成前切中文缺字形。 */
-static const menu_tr_t menu_tr_table[] = {
-    /* ---- 页面标题 ---- */
-    { "Menu",            "Menu",             "菜单" },
-    { "Settings",        "Settings",         "设置" },
-    { "Status",          "Status",           "状态" },
-    { "Tools",           "Tools",            "工具" },
-    { "Games",           "Games",            "游戏" },
-    { "About",           "About",            "关于" },
-    { "Display",         "Display",          "显示" },
-    { "Time",            "Time",             "时间" },
-    { "PowerBank",       "PowerBank",        "充电宝" },
-    { "Reset",           "Reset",            "复位" },
-    /* ---- 条目 ---- */
-    { "Return",          "Return",           "返回" },
-    { "Backlight",       "Backlight",        "背光" },
-    { "Theme",           "Theme",            "主题" },
-    { "Color",           "Color",            "颜色" },
-    { "Max Power",       "Max Power",        "最大功率" },
-    /* ---- PowerBank 子页：Protocol / PowerLimit / Battery ---- */
-    { "Protocol",        "Protocol",         "协议" },
-    { "PowerLimit",      "PowerLimit",       "功率限制" },
-    { "Output",          "Output",           "输出功率" },
-    { "Input",           "Input",            "输入功率" },
-    { "PD out",          "PD out",           "PD 输出" },
-    { "PD in",           "PD in",            "PD 输入" },
-    { "PPS Broadcast",   "PPS Broadcast",    "PPS 能力播发" },
-    { "PPS1",            "PPS1",             "PPS1" },
-    { "PPS3",            "PPS3",             "PPS3" },
-    { "UFCS Broadcast",  "UFCS Broadcast",   "UFCS 能力播发" },
-    { "QC",              "QC",               "QC" },
-    { "FCP",             "FCP",              "FCP" },
-    { "AFC out",         "AFC out",          "AFC 输出" },
-    { "AFC in",          "AFC in",           "AFC 输入" },
-    { "SCP out",         "SCP out",          "SCP 输出" },
-    { "SCP in",          "SCP in",           "SCP 输入" },
-    { "PE",              "PE",               "PE" },
-    { "SFCP",            "SFCP",             "SFCP" },
-    { "VOOC out",        "VOOC out",         "VOOC 输出" },
-    { "VOOC in",         "VOOC in",          "VOOC 输入" },
-    { "SVOOC",           "SVOOC",            "SVOOC" },
-    { "UFCS out",        "UFCS out",         "UFCS 输出" },
-    { "UFCS in",         "UFCS in",          "UFCS 输入" },
-    { "Cap Learn",      "Cap Learn",       "容量学习" },
-    { "Record SOH",      "Record SOH",       "记录SOH" },
-    { "Reset Now",       "Reset Now",        "立即复位" },
-    /* ---- PowerBank 子页：SW6306（手动重新初始化） ---- */
-    { "SW6306",          "SW6306",           "SW6306" },
-    { "Init Now",        "Init Now",         "立即初始化" },
-    { "Coming Soon",     "Coming Soon",      "敬请期待" },
-    { "Pocket PowerBank","Pocket PowerBank", "口袋充电宝" },
-    { "FW 1.0.0",        "FW 1.0.0",         "固件 1.0.0" },
-    { "AT32F423+LVGL9",  "AT32F423+LVGL9",   "AT32F423+LVGL9" },
-    /* ---- Toggle 值 ---- */
-    { "Light",           "Light",            "浅色" },
-    { "Dark",            "Dark",             "深色" },
-    { "45W",             "45W",              "45W" },
-    { "18W",             "18W",              "18W" },
-    { "ON",              "ON",               "开" },
-    { "OFF",             "OFF",              "关" },
-    { "On",              "On",               "开" },
-    { "Off",             "Off",              "关" },
-    { "Auto",            "Auto",             "自动" },
-    /* ---- 显示页：休眠 ---- */
-    { "Auto Sleep",      "Auto Sleep",       "自动休眠" },
-    { "None",            "None",             "不休眠" },
-    { "Sleep Time",      "Sleep Time",       "休眠时间" },
-    { "s",               "s",                "秒" },
-    /* ---- 状态页 / 指示 / 设置 ---- */
-    { "status.bat",      "%.2fV %.3fA",      "%.2fV %.3fA" },
-    { "EDIT",            "EDIT",             "编辑" },
-    { "Language",        "Language",         "语言" },
-    /* ---- 状态页子页 ---- */
-    { "Battery",         "Battery",          "电池" },
-    { "Accelerator",     "Accelerator",      "加速度" },
-    { "Timer",           "Timer",            "时钟" },
-    { "status.maxcap",   "Max: %.2f Wh",     "最大能量: %.2f Wh" },
-    { "status.now",      "Now: %.2f Wh",     "当前能量: %.2f Wh" },
-    { "status.health",   "Health: %.0f%%",   "健康度: %.0f%%" },
-    { "status.cycles",   "Cycles: %.2f",      "循环: %.2f" },
-    { "status.learn",    "Learn:%s",          "容量学习:%s" },
-    { "learn.waiting",   "Waiting",          "等待" },
-    { "learn.ing",       "Learning",         "学习中" },
-    { "learn.done",      "Done",             "已完成" },
-    { "learn.unknown",   "Unknown",          "未知" },
-    { "status.accel_x",  "X: %.2f g",         "X轴: %.2f g" },
-    { "status.accel_y",  "Y: %.2f g",         "Y轴: %.2f g" },
-    { "status.accel_z",  "Z: %.2f g",         "Z轴: %.2f g" },
-    { "status.time",     "%02d:%02d:%02d",    "%02d:%02d:%02d" },
-    { "status.date",     "20%02d-%02d-%02d",  "20%02d-%02d-%02d" },
-    { "status.temp",     "Temp: %d°C",        "温度: %d°C" },
-    { "status.vbackup",  "Vbackup: %.2fV",    "备用电池: %.2fV" },
-    /* ---- 时间页（Time，SD3078 时间设置 + 备用电池充电） ---- */
-    { "Sec",             "Sec",               "秒" },
-    { "Min",             "Min",               "分" },
-    { "Hour",            "Hour",              "时" },
-    { "Day",             "Day",               "日" },
-    { "Month",           "Month",             "月" },
-    { "Year",            "Year",              "年" },
-    { "Backup Charge",   "Backup Charge",     "备用电池充电" },
-};
-
-static menu_lang_t s_menu_lang = MENU_LANG_EN;
-
-void menu_lang_set(menu_lang_t lang)
-{
-    s_menu_lang = lang;
-}
-
-menu_lang_t menu_lang_get(void)
-{
-    return s_menu_lang;
-}
-
-const char *menu_tr(const char *key)
-{
-    unsigned i;
-
-    if (!key) {
-        return key;
-    }
-    for (i = 0; i < sizeof(menu_tr_table) / sizeof(menu_tr_table[0]); i++) {
-        if (strcmp(menu_tr_table[i].key, key) == 0) {
-            return (s_menu_lang == MENU_LANG_ZH) ? menu_tr_table[i].zh
-                                                 : menu_tr_table[i].en;
-        }
-    }
-    return key;   /* 未配置：回退英文（key 即英文文本） */
-}
-
-/* 按语言返回字体（全局共享：菜单渲染 + 主界面都用）。
- * 中文字库（14/12px 部分字符集）待全部文案确认后生成——
- * TODO：生成 lv_font_menucn_14 / lv_font_menucn_12 后，中文态分别返回它们。 */
-const lv_font_t *menu_font_main(void)
-{
-    return &lv_font_ter_u14b;
-}
-
-const lv_font_t *menu_font_small(void)
-{
-    return &lv_font_montserrat_12;
-}
-
 /* ==================== 显示页（Display，三级，归拢显示相关项） ==================== */
 static uint8_t s_theme_toggle = 0;          /* 0=深色 1=浅色 */
 static int32_t s_theme_color_idx = 0;       /* 主题色在色板中的下标 */
 static int32_t s_backlight = 8;             /* 背光亮度 1~16，默认 8 */
 static int32_t s_sleep_idx = 4;             /* 自动休眠：ENUM 选项下标（默认 30s），0=不休眠 */
-static uint8_t s_lang = 0;                  /* 0=English 1=中文（语言切换，字库就绪前勿切中文） */
 
-/* 自动休眠选项文本（元素经 menu_tr 本地化；数字秒值通用无需翻译） */
+/* 自动休眠选项文本（元素经 menu_tr 本地化；"None" 见 menu_ui.c 的 i18n 表） */
 static const char * const s_sleep_opts[] = {
     "None", "5s", "10s", "15s", "30s", "60s", "120s", "300s", "600s",
 };
@@ -193,7 +46,8 @@ static void sleep_apply(menu_item_t *it)
 static void lang_apply(menu_item_t *it)
 {
     (void)it;
-    menu_lang_set(s_lang ? MENU_LANG_ZH : MENU_LANG_EN);
+    /* 语言状态与查表都在 menu_ui.c（i18n 实现处）；这里只触发切换 + 重绘 */
+    menu_lang_toggle();
     menu_notify_changed();
 }
 
@@ -423,7 +277,7 @@ static const menu_item_t menu_items_settings[] = {
     MENU_ITEM_PAGE_("PowerBank", &menu_page_powerbank),
     MENU_ITEM_PAGE_("Display",   &menu_page_display),
     MENU_ITEM_PAGE_("Time",      &menu_page_time),
-    MENU_ITEM_TOGGLE_("Language", &s_lang, "中文", "English", lang_apply),
+    MENU_ITEM_ACTION_("Language", lang_apply),   /* 单击即在中/英之间切换（状态在 menu_ui.c） */
     MENU_ITEM_PAGE_("Reset",     &menu_page_reset),
 };
 MENU_PAGE_("Settings", menu_page_settings, menu_items_settings);

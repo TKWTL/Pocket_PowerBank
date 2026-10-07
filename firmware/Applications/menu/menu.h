@@ -227,6 +227,9 @@ typedef enum {
 
 void menu_lang_set(menu_lang_t lang);
 menu_lang_t menu_lang_get(void);
+/* 供设置页 Language 条目调用：在 EN <-> ZH 之间切换（切换后请 menu_notify_changed() 重绘）。
+ * 语言状态、i18n 表与查表实现都在 menu_ui.c，menu_pages.c 只声明菜单树。 */
+void menu_lang_toggle(void);
 const char *menu_tr(const char *key);   /* 返回当前语言的显示文本 */
 /* 按当前语言返回字体（主界面 14px / 次要 12px；中文字库生成后中文态返回中文字体） */
 const lv_font_t *menu_font_main(void);

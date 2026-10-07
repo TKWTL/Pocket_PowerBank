@@ -29,9 +29,10 @@ extern "C" {
 #endif
 
 /* 充电功能设置（SD3078 内置 VBAT 充电电路）
- * 默认不充电；需要时由上层显式调用 SD3078_ChargeSet()。 */
+ * Driver 上电默认关闭；具体 Off/On/Auto 策略由 Applications/algorithm/sd3078_algo 管理。
+ * MS621FE 使用 5kΩ 档：相对 SII 在 3.3V 下给出的 >=620Ω 最低推荐值更保守。 */
 #define SD3078_CHARGE_ENABLE        0
-#define SD3078_CHARGE_RES_SEL       1       /* 0=10kΩ, 1=5kΩ, 2=2kΩ, 3=断开 */
+#define SD3078_CHARGE_RES_SEL       SD3078_CHARGE_RES_5K
 
 /* 温度报警阈值（°C） */
 #define SD3078_TEMP_ALARM_LOW       (-10)
@@ -72,17 +73,6 @@ typedef struct {
     uint8_t month;
     uint8_t year;
 } sd3078_time_t;
-
-/* UI/上层按字段请求修改时间。驱动在真正提交前重新读取 RTC 当前值，
- * 只覆盖被修改字段，然后仍一次性写满 0x00~0x06 七字节。 */
-typedef enum {
-    SD3078_TIME_FIELD_SEC = 0,
-    SD3078_TIME_FIELD_MIN,
-    SD3078_TIME_FIELD_HOUR,
-    SD3078_TIME_FIELD_DAY,
-    SD3078_TIME_FIELD_MONTH,
-    SD3078_TIME_FIELD_YEAR
-} sd3078_time_field_t;
 
 /* 按寄存器顺序取字段（0=秒 … 6=年）：b[] 视图。
  * 统一转成 uint8_t* 再按固定下标取，故调用点传值（SD3078_Status.time_dec）
@@ -126,10 +116,6 @@ struct SD3078_StatusTypedef
     //芯片ID（只读）
     uint8_t id[8];                  //0x72~0x79 芯片唯一身份识别码
 
-    /* 时间设置请求：bit0..5 分别对应 sec/min/hour/day/month/year。
-     * load_task 提交时先实时读取当前 RTC，再覆盖 pending 字段。 */
-    sd3078_time_t set_time;
-    uint8_t time_set_mask;
 };
 
 //SD3078 I2C 地址，器件代码为7位"0110010"(0x32)，此处为左移一位后的8位写地址
@@ -332,9 +318,6 @@ uint8_t SD3078_ReadYearBCD(void);              //读取年（原始BCD镜像）
 uint8_t SD3078_BcdToDec(uint8_t bcd);          //BCD → 十进制（时间/日期寄存器为 BCD 码）
 uint8_t SD3078_DecToBcd(uint8_t dec);          //十进制 → BCD（时间/日期寄存器为 BCD 码）
 SD3078_RET SD3078_TimeSetDec(SD3078_ARGS(const sd3078_time_t *t));//一次性写7字节RTC时间（十进制输入，固定24h编码）
-SD3078_RET SD3078_RequestTimeSet(SD3078_ARGS(uint8_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t min, uint8_t sec));//请求整组时间（十进制；提交时仍先实时读RTC）
-SD3078_RET SD3078_RequestTimeFieldSet(SD3078_ARGS(sd3078_time_field_t field, uint8_t value));//请求修改单一字段；提交时实时读RTC并整组写回
-SD3078_RET SD3078_TimeSetProcess(SD3078_NOARG);    //处理 pending；无请求时立即返回 I2C_OK
 
 //时间报警操作
 SD3078_RET SD3078_AlarmLoad(SD3078_NOARG);     //读取报警镜像（0x07~0x0D 时间 + 0x0E 报警允许）

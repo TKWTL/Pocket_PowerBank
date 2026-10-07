@@ -11,21 +11,36 @@
 
 static lv_obj_t *s_menu_scr;   /* 菜单屏（主界面/应用屏由菜单应用模型统一管理） */
 
-/* 状态页实时信息：仅当菜单正显示状态页或其子页时更新 */
+/* 500ms UI 数据刷新：
+ *  - Time 设置页非编辑态：持续从 SD3078 镜像同步年月日时分秒，秒数正常走动；
+ *  - Time 编辑态：冻结页面变量，避免 RTC 周期刷新覆盖用户正在修改的值；
+ *  - Status 及子页：刷新状态字符串。 */
 static void status_timer_cb(lv_timer_t *t)
 {
     const menu_page_t *pg;
     (void)t;
+
     if (!menu_is_active()) {
         return;
     }
+
     pg = menu_current_page();
+
+    if (pg == &menu_page_time) {
+        if (!menu_get_state()->editing) {
+            menu_time_read();
+            menu_ui_redraw();
+        }
+        return;
+    }
+
     if (pg != &menu_page_status &&
         pg != &menu_page_status_battery &&
         pg != &menu_page_status_accel &&
         pg != &menu_page_status_timer) {
         return;
     }
+
     menu_status_refresh();
     menu_ui_redraw();
 }

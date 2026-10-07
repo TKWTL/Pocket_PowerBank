@@ -401,6 +401,10 @@ static void slide_start(int8_t dir)
     const menu_item_t *it = menu_current_item();
     int32_t out_w, in_w, out_x, out_y, in_x, in_y, in_center_x, nw;
     uint8_t n = pg ? pg->item_count : 1;
+    /* 滑出项用的是"上一帧的索引"，而换页后它可能属于上一页（索引超出本页条目数）。
+     * 这里必须夹到本页范围内，否则 pg->items[prev] 越界读到别的条目
+     * （例如进过 6 项的 Settings 页再进 2 项的 Games 页，左上角会显示 PowerLimit）。 */
+    uint8_t prev = (s_last_index < n) ? s_last_index : 0;
 
     /* 健壮性：任何新滑动前先停止全部 PID（被中断的动画不得残留驱动对象），
      * 并保证条目数 >=1，避免取模除零 */
@@ -429,7 +433,7 @@ static void slide_start(int8_t dir)
     /* 滑出项（旧当前项）在动画中同样按未选中格式显示（纯 label，无箭头/选项），
      * 避免它带着完整格式长文本滑到角落与滑入项重叠成"影子"；
      * 先更新文本再量宽度，保证滑出起点居中正确。 */
-    fmt_item_text(&pg->items[s_last_index], false, false, buf, sizeof(buf));
+    fmt_item_text(&pg->items[prev], false, false, buf, sizeof(buf));
     lv_label_set_text(s_item, buf);
     lv_obj_update_layout(s_item);
     out_w = lv_obj_get_width(s_item);
@@ -445,7 +449,7 @@ static void slide_start(int8_t dir)
         in_y  = MENU_ROW_BOT_Y;
         /* s_item_prev：重设为旧上一项（refresh 已改为新值），向左滑出屏幕。
          * 先把对象位置与 PID 起点显式对齐（不依赖 set_text 前的旧位置）。 */
-        fmt_item_text(&pg->items[(s_last_index + n - 1) % n], false, false, buf, sizeof(buf));
+        fmt_item_text(&pg->items[(prev + n - 1) % n], false, false, buf, sizeof(buf));
         lv_label_set_text(s_item_prev, buf);
         lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);
         pid_init(&s_prev_out_x, (float)MENU_CORNER_X, (float)(-MENU_SCR_W));   /* 水平向左出屏 */
@@ -470,7 +474,7 @@ static void slide_start(int8_t dir)
         in_y  = MENU_ROW_TOP_Y;
         /* s_item_next：重设为旧下一项，向右滑出屏幕（起点手动计算并显式定位，
          * 避免 set_text 后 align/旧文本位置残留导致起点错误/滑出失效） */
-        fmt_item_text(&pg->items[(s_last_index + 1) % n], false, false, buf, sizeof(buf));
+        fmt_item_text(&pg->items[(prev + 1) % n], false, false, buf, sizeof(buf));
         lv_label_set_text(s_item_next, buf);
         lv_obj_update_layout(s_item_next);
         lv_obj_set_pos(s_item_next,
@@ -1169,13 +1173,17 @@ void menu_ui_redraw(void)
             snap_static(pg, st->index);
             s_first_after_open = false;
         } else if (changed) {
-            if (page_changed) {
-                /* 进入时间页：从 load_task 镜像读当前时间，填充时间设置变量 */
+            /* 只有"上一帧和本帧是同一页、且上一帧索引在本页范围内"才做滑动动画。
+             * 若页变了、或上一帧索引比本页条目数还大（状态机刚更新、缓存滞后），
+             * 说明两者不同源，此时滑动会用到越界/错页的条目，改走 snap_static 重建。 */
+            bool slide_ok = !page_changed && (s_last_index < (pg ? pg->item_count : 0));
+            if (!slide_ok) {
+                /* 页面切换（进入/返回子页）或状态不同源：直接刷新，不做滑动动画
+                 * （避免把上一页内容作为滑出项，如 Status 的电池信息） */
                 if (pg == &menu_page_time) {
+                    /* 进入时间页：从 load_task 镜像读当前时间，填充时间设置变量 */
                     menu_time_read();
                 }
-                /* 页面切换（进入/返回子页）：直接刷新，不做滑动动画
-                 * （避免把上一页内容作为滑出项，如 Status 的电池信息） */
                 snap_static(pg, st->index);
             } else {
                 /* 同页条目切换：斜向滚动

@@ -127,7 +127,8 @@ static i2c_status_type sd3078_algo_process_time(void)
 void SD3078_AlgoInit(void)
 {
     taskENTER_CRITICAL();
-    s_algo.time_set_mask = 0U;
+    /* 不清 time_set_mask：若 SD3078 因一次 I2C 错误被重新初始化，UI 已提交但尚未
+     * 成功落到 RTC 的时间修改必须继续保留。静态对象在真正上电时本来就是 0。 */
     s_algo.backup_charging = 0U; /* SD3078_Init() always starts with charger disabled. */
     if (nvm_is_valid() && nvm_get_backup_charge_mode() <= SD3078_BACKUP_CHARGE_AUTO) {
         s_algo.backup_mode = (sd3078_backup_charge_mode_t)nvm_get_backup_charge_mode();

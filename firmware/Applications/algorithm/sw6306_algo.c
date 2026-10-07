@@ -107,8 +107,15 @@ static void sw6306_algo_finalize_session(float end_mwh)
 
 void SW6306_AlgoInit(void)
 {
-    s_commands = 0U;
     SW6306_AlgoInvalidateDischargeSession();
+
+    /* 让算法层配置成为唯一真实配置源：任务启动后也主动写一次，而不是依赖
+     * driver 的编译期默认值（例如 driver 默认55W而菜单默认45W）。 */
+    taskENTER_CRITICAL();
+    s_commands = SW6306_CMD_PROTOCOL |
+                 SW6306_CMD_POWER |
+                 SW6306_CMD_LEARN;
+    taskEXIT_CRITICAL();
 }
 
 void SW6306_AlgoInvalidateDischargeSession(void)

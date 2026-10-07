@@ -241,6 +241,14 @@ static void pos_next_corner(lv_obj_t *lbl)
     lv_obj_set_pos(lbl, MENU_SCR_W - lv_obj_get_width(lbl) - MENU_CORNER_X, MENU_ROW_BOT_Y);
 }
 
+/* 中间项静止高亮色：Return 用主题色，其余用普通文字色。
+ * s_item 文字与它的 "<" 箭头（独立对象）共用这一份判定，保持一致。 */
+static lv_color_t mid_highlight_color(const menu_item_t *it)
+{
+    return (it && it->type == MENU_ITEM_BACK) ? menu_theme_get()->primary
+                                              : menu_theme_get()->text;
+}
+
 /* 中间项 Return 的 "<" 箭头：与 s_item 文字分开成两个对象，单独染色。
  * 调用时机：每次设置 s_item 文本/位置/颜色之后（箭头是独立对象，不会自动跟随）。
  *  - 只给 MENU_ITEM_BACK（Return）显示；其他类型隐藏，避免残留在中间。
@@ -248,8 +256,8 @@ static void pos_next_corner(lv_obj_t *lbl)
  *    重叠，故左移 1px；再把「箭头 + 1px + 文字」整体对屏幕居中（等价于原来
  *    单 label 显示 "< Return" 的居中效果，文字本身用 item_recenter 居中过，
  *    这里一起左移半个箭头宽）。
- *  - 颜色：由调用方通过 color 指定，与 s_item 文字颜色分离传入，因此将来若要
- *    把 Return 文字改成主题色，只需在调用点传 primary，箭头传 text 即可。
+ *  - 颜色：与 s_item 的文字颜色同源，由调用方通过 color 传入（Return 用主题色
+ *    primary，其余用普通文字色 text；动画中为灰色 text_sec）。
  * 参数 color 必须与同一次调用里写进 s_item 的文字颜色一致（含动画中的灰色态）。 */
 static void sync_mid_arrow(const menu_item_t *it, lv_color_t color)
 {
@@ -355,9 +363,9 @@ static void snap_static(const menu_page_t *pg, uint8_t index)
         lv_label_set_text(s_item, buf);
         item_recenter(s_item);
         lv_obj_set_y(s_item, MENU_ROW_MID_Y);
-        /* Return 用主题色高亮；"<" 箭头保持普通文字色（单独对象，不跟随） */
-        lv_obj_set_style_text_color(s_item, menu_theme_get()->primary, 0);
-        sync_mid_arrow(&pg->items[index], menu_theme_get()->text);
+        /* Return 用主题色高亮，"<" 箭头同色；其余条目用普通文字色 */
+        lv_obj_set_style_text_color(s_item, mid_highlight_color(&pg->items[index]), 0);
+        sync_mid_arrow(&pg->items[index], mid_highlight_color(&pg->items[index]));
         lv_obj_remove_flag(s_item_prev, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_item_next, LV_OBJ_FLAG_HIDDEN);
         refresh_prev_next(pg, index);
@@ -526,15 +534,13 @@ static void slide_commit_next(const menu_page_t *pg, uint8_t index)
     if (n > 0 && index < n) {
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
         lv_label_set_text(s_item, buf);
-        /* 落定高亮：Return 用主题色，其余用普通文字色；箭头始终普通文字色 */
-        lv_obj_set_style_text_color(s_item,
-            (pg->items[index].type == MENU_ITEM_BACK) ? menu_theme_get()->primary
-                                                      : menu_theme_get()->text, 0);
+        /* 落定高亮：Return 用主题色，其余用普通文字色；箭头与文字同色 */
+        lv_obj_set_style_text_color(s_item, mid_highlight_color(&pg->items[index]), 0);
         /* 必须重新居中：动画期间中间项按【未选中简格式】文本宽度定位，
          * 换成完整格式（带箭头/选项）后宽度变了，沿用旧 x 会让它偏左甚至看起来"消失"
          * （snap_static 走的是同一套：set_text 后 item_recenter） */
         item_recenter(s_item);
-        sync_mid_arrow(&pg->items[index], menu_theme_get()->text);
+        sync_mid_arrow(&pg->items[index], mid_highlight_color(&pg->items[index]));
         fmt_item_text(&pg->items[(index + 1) % n], false, false, buf, sizeof(buf));
         lv_label_set_text(s_item_next, buf);
         pos_next_corner(s_item_next);
@@ -576,12 +582,10 @@ static void slide_commit_prev(const menu_page_t *pg, uint8_t index)
     if (n > 0 && index < n) {
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
         lv_label_set_text(s_item, buf);
-        lv_obj_set_style_text_color(s_item,
-            (pg->items[index].type == MENU_ITEM_BACK) ? menu_theme_get()->primary
-                                                      : menu_theme_get()->text, 0);
+        lv_obj_set_style_text_color(s_item, mid_highlight_color(&pg->items[index]), 0);
         /* 同 NEXT：换完整格式后必须重新居中（动画期间是按简格式宽度定位的） */
         item_recenter(s_item);
-        sync_mid_arrow(&pg->items[index], menu_theme_get()->text);
+        sync_mid_arrow(&pg->items[index], mid_highlight_color(&pg->items[index]));
         fmt_item_text(&pg->items[(index + n - 1) % n], false, false, buf, sizeof(buf));
         lv_label_set_text(s_item_prev, buf);
         lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);
@@ -689,12 +693,12 @@ static void apply_theme(void)
     /* 当前条目：静止高亮；滑动动画中灰色（防止动画期间任何 redraw 把
      * s_item/s_item_in 刷回高亮，造成新旧选中项同时高亮——
      * 高亮只允许出现在静止态的中间项）。
-     * Return（MENU_ITEM_BACK）静止时用主题色 primary；它的 "<" 箭头是独立
-     * 对象，固定普通文字色 text，不随文字一起变主题色。 */
+     * Return（MENU_ITEM_BACK）静止时用主题色 primary，它的 "<" 箭头同色
+     * （箭头是独立对象，颜色由 sync_mid_arrow 在各调用点同步）。 */
     {
         const menu_item_t *mi = menu_current_item();
-        lv_color_t hl = (mi && mi->type == MENU_ITEM_BACK) ? t->primary : t->text;
-        lv_obj_set_style_text_color(s_item, s_sliding ? t->text_sec : hl, 0);
+        lv_obj_set_style_text_color(s_item,
+            s_sliding ? t->text_sec : mid_highlight_color(mi), 0);
     }
     lv_obj_set_style_text_color(s_item_in, s_sliding ? t->text_sec : t->text, 0);
     /* 图标页顶部文字条：名称与时间始终高亮（主题色 primary） */

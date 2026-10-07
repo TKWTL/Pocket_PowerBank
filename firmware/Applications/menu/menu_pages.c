@@ -114,7 +114,7 @@ static const menu_tr_t menu_tr_table[] = {
     { "status.accel_z",  "Z: %.2f g",         "Z轴: %.2f g" },
     { "status.time",     "%02d:%02d:%02d",    "%02d:%02d:%02d" },
     { "status.date",     "20%02d-%02d-%02d",  "20%02d-%02d-%02d" },
-    { "status.temp",     "Temp: %d C",        "温度: %d C" },
+    { "status.temp",     "Temp: %d°C",        "温度: %d°C" },
     { "status.vbackup",  "Vbackup: %.2fV",    "备用电池: %.2fV" },
     /* ---- 时间页（Time，SD3078 时间设置 + 备用电池充电） ---- */
     { "Sec",             "Sec",               "秒" },
@@ -124,11 +124,6 @@ static const menu_tr_t menu_tr_table[] = {
     { "Month",           "Month",             "月" },
     { "Year",            "Year",              "年" },
     { "Backup Charge",   "Backup Charge",     "备用电池充电" },
-    /* ---- 主界面（functions/main_screen.c） ---- */
-    { "main.title",      " #cf3d3e PowerBank!!!#", " #cf3d3e 充电宝!!!#" },
-    { "main.bat",        "BAT: %.2fV  %.3fA",      "电池: %.2fV  %.3fA" },
-    { "main.bat.space",  "BAT:  %.2fV  %.3fA",     "电池:  %.2fV  %.3fA" },
-    { "main.bus",        "BUS: %.2fV  %.3fA",      "输出: %.2fV  %.3fA" },
 };
 
 static menu_lang_t s_menu_lang = MENU_LANG_EN;

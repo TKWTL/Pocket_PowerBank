@@ -98,7 +98,16 @@ static i2c_status_type sd3078_algo_process_time(void)
         return st;
     }
 
-    t = SD3078_Status.time_dec;
+    /* Driver mirror is private to sd3078.c; rebuild the current decimal time only
+     * through its public read-only API after TimeLoad() has atomically refreshed it. */
+    SD3078_SEC(&t)   = SD3078_ReadSec();
+    SD3078_MIN(&t)   = SD3078_ReadMin();
+    SD3078_HOUR(&t)  = SD3078_ReadHour();
+    SD3078_WEEK(&t)  = SD3078_ReadWeek();
+    SD3078_DAY(&t)   = SD3078_ReadDay();
+    SD3078_MONTH(&t) = SD3078_ReadMonth();
+    SD3078_YEAR(&t)  = SD3078_ReadYear();
+
     if (mask & (1U << 0)) SD3078_SEC(&t)   = SD3078_SEC(&req);
     if (mask & (1U << 1)) SD3078_MIN(&t)   = SD3078_MIN(&req);
     if (mask & (1U << 2)) SD3078_HOUR(&t)  = SD3078_HOUR(&req);
@@ -120,7 +129,7 @@ static i2c_status_type sd3078_algo_process_time(void)
         return st;
     }
 
-    SD3078_Status.time_dec = t;
+    /* 周期 TimeLoad 最迟 500ms 后更新 UI 镜像；下一次编辑提交仍会先实时读硬件。 */
     return I2C_OK;
 }
 

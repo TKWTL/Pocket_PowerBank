@@ -11,6 +11,9 @@ extern "C" {
 #include "framework/pm_api.h"           /* PM 框架 API（休眠控制接口） */
 #include "framework/pm_sleep_timer.h"   /* 休眠定时器（获取剩余时间等） */
 #include "framework/nvm_store.h"       /* SD3078 Backup RAM NVM */
+#include "algorithm/sd3078_algo.h"      /* RTC提交 + MS621FE 后备电池策略 */
+#include "algorithm/sw6306_algo.h"      /* SW6306 配置命令 + SOH/EFC */
+#include "algorithm/sc7a20_algo.h"      /* 重力方向/旋转判定 */
 
 /* ===== 外设驱动头文件 =====
  * 统一包含头 drivers.h：增删外部功能芯片时只改 Drivers/drivers.h 即可移植。

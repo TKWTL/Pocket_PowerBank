@@ -2731,6 +2731,26 @@
           </Files>
         </Group>
         <Group>
+          <GroupName>Algorithm</GroupName>
+          <Files>
+            <File>
+              <FileName>sd3078_algo.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\algorithm\sd3078_algo.c</FilePath>
+            </File>
+            <File>
+              <FileName>sw6306_algo.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\algorithm\sw6306_algo.c</FilePath>
+            </File>
+            <File>
+              <FileName>sc7a20_algo.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\algorithm\sc7a20_algo.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
           <GroupName>Functions</GroupName>
           <Files>
             <File>

@@ -45,6 +45,7 @@ typedef struct {
     float candidate_start_mwh;
     float candidate_full_mwh;
     float candidate_end_mwh;
+    float last_discharge_mwh;
     float start_mwh;
     float full_mwh;
 } sw6306_discharge_session_t;
@@ -118,6 +119,7 @@ void SW6306_AlgoInvalidateDischargeSession(void)
     s_session.candidate_start_mwh = 0.0f;
     s_session.candidate_full_mwh = 0.0f;
     s_session.candidate_end_mwh = 0.0f;
+    s_session.last_discharge_mwh = 0.0f;
     s_session.start_mwh = 0.0f;
     s_session.full_mwh = 0.0f;
 }
@@ -153,6 +155,7 @@ void SW6306_AlgoUpdate(void)
                     s_session.candidate_start_mwh > 0.0f) {
                     s_session.start_mwh = s_session.candidate_start_mwh;
                     s_session.full_mwh = s_session.candidate_full_mwh;
+                    s_session.last_discharge_mwh = remain_mwh;
                     s_session.active = 1U;
                     s_session.stop_count = 0U;
                 } else {
@@ -166,14 +169,16 @@ void SW6306_AlgoUpdate(void)
     }
 
     if (discharging) {
+        /* Keep the most recent sample that is still unquestionably inside discharge.
+         * If the next state is charging, using the first non-discharge sample would
+         * subtract some newly charged energy and under-count the session. */
+        s_session.last_discharge_mwh = remain_mwh;
         s_session.stop_count = 0U;
         return;
     }
 
     if (s_session.stop_count == 0U) {
-        /* End snapshot is the first confirmed transition-out sample; waiting several
-         * task cycles must not accidentally count idle/charging energy afterwards. */
-        s_session.candidate_end_mwh = remain_mwh;
+        s_session.candidate_end_mwh = s_session.last_discharge_mwh;
     }
     if (s_session.stop_count < SW6306_ALGO_STOP_CONFIRM_SAMPLES) {
         s_session.stop_count++;

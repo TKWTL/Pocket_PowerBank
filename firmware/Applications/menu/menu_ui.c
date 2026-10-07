@@ -238,12 +238,12 @@ static void pos_next_corner(lv_obj_t *lbl)
 }
 
 /* ---------- 条目配色（必须定义在所有使用它的函数之前） ----------
- * 角色划分，只有中间选中行允许用高亮色：
  *  - item_highlight_color()：选中行颜色。Return（MENU_ITEM_BACK）用主题色，
  *    其余普通文字色；"<" 与文字同属一个 label，所以一起变色。
- *  - item_dim_color()：未选中行颜色（4 个角落标签），次要文字灰。
- *  - color_unselected()：给角落标签上色；只有当该角标恰好就是选中项时才用高亮色
- *    （正常不会发生），从代码上固化"高亮只属于中间行"这条不变量。 */
+ *  - item_dim_color()：未选中行颜色，次要文字灰。
+ *  - color_unselected()：给 4 个角落标签及其动画副本上色。规则是"按条目类型"：
+ *    Return 即使未选中也保持主题色，其余条目落灰。因此角上出现 Return 时会是
+ *    主题色，与中间的高亮行同色（用户要求：角上主题色、选中时高亮）。 */
 static lv_color_t item_highlight_color(const menu_item_t *it)
 {
     return (it && it->type == MENU_ITEM_BACK) ? menu_theme_get()->primary
@@ -264,10 +264,17 @@ static const menu_item_t *page_item(const menu_page_t *pg, uint8_t index)
     return &pg->items[index];
 }
 
-static void color_unselected(lv_obj_t *lbl, const menu_item_t *it, const menu_item_t *sel)
+/* 未选中项颜色：Return 保持主题色，其余次要灰。
+ * 注意这里不比较"是否选中"：角上的 Return 故意与中间行同色（要求如此）。 */
+static lv_color_t item_unselected_color(const menu_item_t *it)
 {
-    lv_obj_set_style_text_color(lbl, (it == sel) ? item_highlight_color(it)
-                                                 : item_dim_color(), 0);
+    return (it && it->type == MENU_ITEM_BACK) ? item_highlight_color(it)
+                                              : item_dim_color();
+}
+
+static void color_unselected(lv_obj_t *lbl, const menu_item_t *it)
+{
+    lv_obj_set_style_text_color(lbl, item_unselected_color(it), 0);
 }
 
 /* 更新左上/右下角上一项/下一项文本（菜单循环，取模索引） */
@@ -670,31 +677,27 @@ static void apply_theme(const menu_page_t *pg, uint8_t index)
     /* 主题色（primary，可改）：菜单名称与页码，使 Color 切换可见 */
     lv_obj_set_style_text_color(s_header, t->primary, 0);
     lv_obj_set_style_text_color(s_indicator, t->primary, 0);
-    /* 上一项/下一项（含动画滑入的那两份）：未选中态。
-     * 只对"当前索引"这一项保留高亮色兜底（正常情况下它就是中间项，不会走到角上），
-     * 其余一律次要灰 —— 高亮色只属于中间项，避免多项同时高亮。 */
-    {
-        const menu_item_t *sel = page_item(pg, index);
-        if (n > 1) {
-            color_unselected(s_item_prev,    page_item(pg, (uint8_t)((index + n - 1U) % n)), sel);
-            color_unselected(s_item_next,    page_item(pg, (uint8_t)((index + 1U) % n)), sel);
-            color_unselected(s_item_prev_in, page_item(pg, (uint8_t)((index + n - 1U) % n)), sel);
-            color_unselected(s_item_next_in, page_item(pg, (uint8_t)((index + 1U) % n)), sel);
-        } else {
-            lv_obj_set_style_text_color(s_item_prev,    item_dim_color(), 0);
-            lv_obj_set_style_text_color(s_item_next,    item_dim_color(), 0);
-            lv_obj_set_style_text_color(s_item_prev_in, item_dim_color(), 0);
-            lv_obj_set_style_text_color(s_item_next_in, item_dim_color(), 0);
-        }
-        /* 当前条目：静止高亮；滑动动画中灰色（防止动画期间任何 redraw 把
-         * s_item/s_item_in 刷回高亮，造成新旧选中项同时高亮——
-         * 高亮只允许出现在静止态的中间项）。
-         * Return（MENU_ITEM_BACK）选中时用主题色 primary，"<" 与文字同一 label 一起变色。 */
-        lv_obj_set_style_text_color(s_item,
-            s_sliding ? item_dim_color() : item_highlight_color(sel), 0);
-        lv_obj_set_style_text_color(s_item_in,
-            s_sliding ? item_dim_color() : item_highlight_color(sel), 0);
+    /* 上一项/下一项（含动画滑入的那两份）：按条目类型上色 ——
+     * Return 保持主题色，其余次要灰。 */
+    if (n > 1) {
+        color_unselected(s_item_prev,    page_item(pg, (uint8_t)((index + n - 1U) % n)));
+        color_unselected(s_item_next,    page_item(pg, (uint8_t)((index + 1U) % n)));
+        color_unselected(s_item_prev_in, page_item(pg, (uint8_t)((index + n - 1U) % n)));
+        color_unselected(s_item_next_in, page_item(pg, (uint8_t)((index + 1U) % n)));
+    } else {
+        lv_obj_set_style_text_color(s_item_prev,    item_dim_color(), 0);
+        lv_obj_set_style_text_color(s_item_next,    item_dim_color(), 0);
+        lv_obj_set_style_text_color(s_item_prev_in, item_dim_color(), 0);
+        lv_obj_set_style_text_color(s_item_next_in, item_dim_color(), 0);
     }
+    /* 当前条目：静止高亮；滑动动画中灰色（防止动画期间任何 redraw 把
+     * s_item/s_item_in 刷回高亮，造成新旧选中项同时高亮——
+     * 高亮只允许出现在静止态的中间项）。
+     * Return（MENU_ITEM_BACK）选中时用主题色 primary，"<" 与文字同一 label 一起变色。 */
+    lv_obj_set_style_text_color(s_item,
+        s_sliding ? item_dim_color() : item_highlight_color(page_item(pg, index)), 0);
+    lv_obj_set_style_text_color(s_item_in,
+        s_sliding ? item_dim_color() : item_highlight_color(page_item(pg, index)), 0);
     /* 图标页顶部文字条：名称与时间始终高亮（主题色 primary） */
     lv_obj_set_style_text_color(s_icon_hint, t->primary, 0);
     lv_obj_set_style_text_color(s_icon_clock, t->primary, 0);

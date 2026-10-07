@@ -40,7 +40,10 @@ void SW6306_task_func(void *pvParameters)
 {
     (void)pvParameters;
     uint8_t i = 0;
-        
+
+    /* 算法状态由本任务独占推进；其它线程只能发 request / 读取结果。 */
+    SW6306_AlgoInit();
+
     while (1) {
         if (sw6306_gate_check()) continue;
         vTaskDelay(100);
@@ -59,8 +62,17 @@ void SW6306_task_func(void *pvParameters)
         SW6306_PowerLoad();
         SW6306_CapacityLoad();
 
+        /* Fresh Status+Capacity mirrors are the only input to the discharge-session
+         * algorithm.  It snapshots the SW6306 internal energy gauge at session
+         * boundaries; no MCU time integration is used. */
+        SW6306_AlgoUpdate();
+
+        /* Menu/UI requests are executed here, never from ui_task. */
+        SW6306_AlgoProcessCommands();
+
         if (SW6306_IsInitialized() == 0) {
             USART_Printf("[SW6306] Re-Inited.\n");
+            SW6306_AlgoInvalidateDischargeSession();
             SW6306_ForceOff();
             SW6306_Init();
             SW6306_IextEnSet(0);

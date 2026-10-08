@@ -16,9 +16,9 @@ extern "C" {
 #endif
 
 #define NVM_PROTO_VERSION_MAJOR   0U
-#define NVM_PROTO_VERSION_MINOR   4U
+#define NVM_PROTO_VERSION_MINOR   5U
 #define NVM_PROTO_VERSION_PATCH   0U
-#define NVM_PROTO_VERSION_STRING  "0.4.0-prototype"
+#define NVM_PROTO_VERSION_STRING  "0.5.0-prototype"
 
 #define NVM_TOTAL_SIZE            70U
 #define NVM_PAYLOAD_SIZE          68U
@@ -29,6 +29,10 @@ extern "C" {
 #define NVM_DEFAULT_SHUNT_MOHM                 3.0f
 #define NVM_DEFAULT_SC7A20_X_ZERO_RAW             0
 #define NVM_DEFAULT_SC7A20_X_SLOPE_MG_PER_LSB 1.0f
+#define NVM_DEFAULT_SC7A20_Y_ZERO_RAW             0
+#define NVM_DEFAULT_SC7A20_Y_SLOPE_MG_PER_LSB 1.0f
+#define NVM_DEFAULT_SC7A20_Z_ZERO_RAW             0
+#define NVM_DEFAULT_SC7A20_Z_SLOPE_MG_PER_LSB 1.0f
 #define NVM_DEFAULT_BACKUP_CHARGE_MODE         2U   /* 0=Off, 1=On, 2=Auto */
 
 typedef struct {
@@ -37,6 +41,10 @@ typedef struct {
     float shunt_mohm;                /* SW6306 电池端分流电阻校准值 */
     int16_t sc7a20_x_zero_raw;       /* SC7A20 X轴右对齐原始码零点 */
     float sc7a20_x_slope_mg_per_lsb; /* SC7A20 X轴 mg/LSB 斜率 */
+    int16_t sc7a20_y_zero_raw;       /* SC7A20 Y轴右对齐原始码零点 */
+    float sc7a20_y_slope_mg_per_lsb; /* SC7A20 Y轴 mg/LSB 斜率 */
+    int16_t sc7a20_z_zero_raw;       /* SC7A20 Z轴右对齐原始码零点 */
+    float sc7a20_z_slope_mg_per_lsb; /* SC7A20 Z轴 mg/LSB 斜率 */
     uint8_t backup_charge_mode;      /* SD3078 后备电池充电模式：0/1/2 = Off/On/Auto */
 } nvm_values_t;
 
@@ -71,6 +79,14 @@ int16_t nvm_get_sc7a20_x_zero_raw(void);
 void nvm_set_sc7a20_x_zero_raw(int16_t value);
 float nvm_get_sc7a20_x_slope_mg_per_lsb(void);
 void nvm_set_sc7a20_x_slope_mg_per_lsb(float value);
+int16_t nvm_get_sc7a20_y_zero_raw(void);
+void nvm_set_sc7a20_y_zero_raw(int16_t value);
+float nvm_get_sc7a20_y_slope_mg_per_lsb(void);
+void nvm_set_sc7a20_y_slope_mg_per_lsb(float value);
+int16_t nvm_get_sc7a20_z_zero_raw(void);
+void nvm_set_sc7a20_z_zero_raw(int16_t value);
+float nvm_get_sc7a20_z_slope_mg_per_lsb(void);
+void nvm_set_sc7a20_z_slope_mg_per_lsb(float value);
 uint8_t nvm_get_backup_charge_mode(void);
 void nvm_set_backup_charge_mode(uint8_t mode);
 

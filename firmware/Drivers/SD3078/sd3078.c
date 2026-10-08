@@ -530,16 +530,11 @@ uint8_t SD3078_ReadID(uint8_t idx)
 }
 
 /*******************************初始化区***************************************/
-/*SD3078正式初始化（默认不充电 + 低功耗配置）
- * ① 充电：每次上电重置充电寄存器为「不充电」（默认）；需要充电时由上层/菜单
- *    手动或自动调用 SD3078_ChargeSet(1, res) 使能（备用电池充电开关）。
- * ② 低功耗：禁止 32K 输出（F32K=1）；禁止报警/频率/倒计时中断输出（INTFE/INTAE/INTDE=0）；
- *    VBAT 模式下禁止 INT 输出（FOBAT=0）；INT 脚高阻（INTS=00 + CTR4.INTS_E=000）。
- *    注：充电功能开启后 VDD 电流会增加约 80uA，属正常现象。
- * 注意：本函数为正式初始化（上电即调用），不配置时间/报警/倒计时等；
- *       需要温度报警等完整配置时，再调用SD3078_FullInit()。
- *       是否重试由上层根据 i2c_status_type 决定。
- */
+/* SD3078统一初始化。
+ * ① 充电寄存器恢复为默认关闭，具体 Off/On/Auto 由 sd3078_algo 接管；
+ * ② 禁止32K/报警/频率/倒计时INT输出，VBAT模式不输出INT，INT脚保持高阻；
+ * ③ 写入默认高低温报警阈值，为后续需要时启用温度报警准备好寄存器。
+ * 不配置RTC时间/闹钟/倒计时值；失败由上层根据 i2c_status_type 重试。 */
 SD3078_RET SD3078_Init(SD3078_NOARG)
 {
     i2c_status_type st;
@@ -579,30 +574,6 @@ SD3078_RET SD3078_Init(SD3078_NOARG)
         SD3078_MUTEX_GIVE;
     }
 
-    lock_st = SD3078_Lock();
-    return (st != I2C_OK) ? st : lock_st;
-}
-
-/*SD3078完整初始化（在正式SD3078_Init基础上追加温度报警阈值等完整配置）
- * 默认不充电；需要时由上层/菜单调用 SD3078_ChargeSet(1, res) 使能。 */
-SD3078_RET SD3078_FullInit(SD3078_NOARG)
-{
-    i2c_status_type st;
-    i2c_status_type lock_st;
-
-    SD3078_MUTEX_TAKE;
-    st = SD3078_ByteRead(SD3078_CTRG_CTR1, &SD3078_Status.ctr1);
-    SD3078_MUTEX_GIVE;
-    if (st != I2C_OK) return st;
-    if (SD3078_Status.ctr1 == 0xFFU) return I2C_ERR_ADDR;
-
-    st = SD3078_IDLoad();
-    if (st != I2C_OK) return st;
-
-    st = SD3078_Unlock();
-    if (st != I2C_OK) return st;
-
-    st = SD3078_ChargeSet(SD3078_CHARGE_ENABLE, SD3078_CHARGE_RES_SEL);
     if (st == I2C_OK) {
         st = SD3078_TempAlarmSet(SD3078_TEMP_ALARM_LOW, SD3078_TEMP_ALARM_HIGH);
     }

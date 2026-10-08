@@ -38,9 +38,17 @@ typedef struct {
 
 extern sw6306_algo_config_t SW6306_AlgoConfig;
 
+#define SW6306_ALGO_LOAD_STEP_MS 100U
+
 void SW6306_AlgoInit(void);
 
-/* SW6306_task only: call after fresh StatusLoad + CapacityLoad. */
+/* SW6306_task只负责周期调度；具体Load分组与周期由algo持有。
+ * Step: 100ms调用一次，ADC/Status/Port/Power约500ms一轮，Capacity约1s一轮。
+ * All: 唤醒预取等场景强制刷新全部镜像。 */
+void SW6306_AlgoLoadStep(void);
+void SW6306_AlgoLoadAll(void);
+
+/* 由容量Load路径在获得fresh Capacity镜像后调用。 */
 void SW6306_AlgoUpdate(void);
 void SW6306_AlgoProcessCommands(void);
 void SW6306_AlgoInvalidateDischargeSession(void);

@@ -39,38 +39,21 @@ static uint8_t sw6306_gate_check(void)
 void SW6306_task_func(void *pvParameters)
 {
     (void)pvParameters;
-    uint8_t i = 0;
+    uint8_t dbg_idx = 0U;
+    uint8_t service_div = 0U;
 
-    /* 算法状态由本任务独占推进；其它线程只能发 request / 读取结果。 */
+    /* 算法层持有Load相位、容量1s分频和业务状态；任务只提供100ms调度节拍。 */
     SW6306_AlgoInit();
 
     while (1) {
         if (sw6306_gate_check()) continue;
-        vTaskDelay(100);
+        vTaskDelay(pdMS_TO_TICKS(SW6306_ALGO_LOAD_STEP_MS));
         if (sw6306_gate_check()) continue;
-        SW6306_ADCLoad();
-        vTaskDelay(100);
-        if (sw6306_gate_check()) continue;
-        SW6306_StatusLoad();
-        /* 由 VNTC/INTC 计算 NTC 温度并更新句柄（供 UI/菜单读取） */
-        SW6306_NTCTempLoad();
-        vTaskDelay(100);
-        if (sw6306_gate_check()) continue;
-        SW6306_PortStatusLoad();
-        vTaskDelay(200);
-        if (sw6306_gate_check()) continue;
-        SW6306_PowerLoad();
-        SW6306_CapacityLoad();
 
-        /* Fresh Status+Capacity mirrors are the only input to the discharge-session
-         * algorithm.  It snapshots the SW6306 internal energy gauge at session
-         * boundaries; no MCU time integration is used. */
-        SW6306_AlgoUpdate();
-
-        /* Menu/UI requests are executed here, never from ui_task. */
+        SW6306_AlgoLoadStep();
         SW6306_AlgoProcessCommands();
 
-        if (SW6306_IsInitialized() == 0) {
+        if (SW6306_IsInitialized() == 0U) {
             USART_Printf("[SW6306] Re-Inited.\n");
             SW6306_AlgoInvalidateDischargeSession();
             SW6306_ForceOff();
@@ -83,21 +66,26 @@ void SW6306_task_func(void *pvParameters)
             }
         }
 
+        /* 保持原先约500ms的睡眠判定/调试输出节拍。 */
+        if (++service_div < 5U) continue;
+        service_div = 0U;
+
         sw6306_update_sleep_block();
 
-        if (i == 0) {
-            USART_Printf("VBUS:%dmV\tIBUS:%dmA\tPBUS:%.3fW\n", SW6306_ReadVBUS(), SW6306_ReadIBUS(), SW6306_ReadVBUS() * SW6306_ReadIBUS() * 0.000001f);
+        if (dbg_idx == 0U) {
+            USART_Printf("VBUS:%dmV\tIBUS:%dmA\tPBUS:%.3fW\n",
+                         SW6306_ReadVBUS(), SW6306_ReadIBUS(),
+                         SW6306_ReadVBUS() * SW6306_ReadIBUS() * 0.000001f);
+        } else if (dbg_idx == 1U) {
+            USART_Printf("VBAT:%dmV\tIBAT:%dmA\tPBAT:%.3fW\n",
+                         SW6306_ReadVBAT(), SW6306_ReadIBAT(),
+                         SW6306_ReadVBAT() * SW6306_ReadIBAT() * 0.000001f);
+        } else if (dbg_idx == 2U) {
+            USART_Printf("TChip:%.1fC\tBatCap:%d%%\tSleep:%lums\n\n",
+                         SW6306_ReadTCHIP(), SW6306_ReadCapacity(), pm_sleep_timer_left_ms());
         }
-        if (i == 1) {
-            USART_Printf("VBAT:%dmV\tIBAT:%dmA\tPBAT:%.3fW\n", SW6306_ReadVBAT(), SW6306_ReadIBAT(), SW6306_ReadVBAT() * SW6306_ReadIBAT() * 0.000001f);
-        }
-        if (i == 2) {
-            USART_Printf("TChip:%.1fC\tBatCap:%d%%\tSleep:%lums\n\n", SW6306_ReadTCHIP(), SW6306_ReadCapacity(), pm_sleep_timer_left_ms());
-        }
-        if (i == 4) {
-            i = 0;
-        } else {
-            i++;
-        }
+
+        dbg_idx++;
+        if (dbg_idx >= 5U) dbg_idx = 0U;
     }
 }

@@ -90,6 +90,64 @@ static void sw6306_algo_update_capacity_learning(void)
 }
 /******************************* 容量学习算法结束 *******************************/
 
+/************************ SW6306 分层寄存器Load算法开始 ************************/
+/* 保留原SW6306_task的100ms错相访问，避免把多组I2C读集中到同一时刻：
+ *   phase0: ADC
+ *   phase1: Status + NTC换算
+ *   phase2: Port status
+ *   phase3: 留空（保持原Port→Power约200ms间隔）
+ *   phase4: Power
+ * 上述完整周期约500ms。Capacity/能量计只在每两个完整周期读取一次，即约1s；
+ * EFC/容量学习只在fresh Capacity镜像到达后推进。 */
+static uint8_t s_load_phase;
+static uint8_t s_capacity_cycle;
+
+void SW6306_AlgoLoadStep(void)
+{
+    if (!SW6306_IsInitialized()) return;
+
+    switch (s_load_phase) {
+    case 0U:
+        SW6306_ADCLoad();
+        break;
+    case 1U:
+        SW6306_StatusLoad();
+        SW6306_NTCTempLoad();
+        break;
+    case 2U:
+        SW6306_PortStatusLoad();
+        break;
+    case 3U:
+        break;
+    default:
+        SW6306_PowerLoad();
+        if (++s_capacity_cycle >= 2U) {
+            s_capacity_cycle = 0U;
+            SW6306_CapacityLoad();
+            SW6306_AlgoUpdate();
+        }
+        break;
+    }
+
+    s_load_phase++;
+    if (s_load_phase >= 5U) s_load_phase = 0U;
+}
+
+void SW6306_AlgoLoadAll(void)
+{
+    if (!SW6306_IsInitialized()) return;
+
+    /* 唤醒预取可由load_task调用，因此这里只刷新driver镜像，不推进由
+     * SW6306_task独占的Load相位/EFC状态。 */
+    SW6306_ADCLoad();
+    SW6306_StatusLoad();
+    SW6306_NTCTempLoad();
+    SW6306_PortStatusLoad();
+    SW6306_PowerLoad();
+    SW6306_CapacityLoad();
+}
+/************************ SW6306 分层寄存器Load算法结束 ************************/
+
 /***************************** EFC 容量统计算法开始 *****************************/
 /* SW6306 内部能量计负责积分，MCU 不做 V*I*time。
  * 每个连续放电 session 开始时锁存 E_start 与当时的 E_full；
@@ -143,6 +201,8 @@ void SW6306_AlgoInit(void)
 {
     SW6306_AlgoInvalidateDischargeSession();
     s_learn_state = SW6306_LEARN_ST_UNKNOWN;
+    s_load_phase = 0U;
+    s_capacity_cycle = 1U;
 
     /* 算法层配置是唯一真实配置源；容量学习固定常开。
      * 注意这里只“确保使能”，不清 LEARN_END。 */
@@ -316,6 +376,8 @@ void SW6306_AlgoOnDriverReinitialized(void)
      * 但仍不清 LEARN_END；若已有 DONE，下一次 AlgoUpdate 会消费并 re-arm。 */
     SW6306_AlgoInvalidateDischargeSession();
     s_learn_state = SW6306_LEARN_ST_UNKNOWN;
+    s_load_phase = 0U;
+    s_capacity_cycle = 1U;
     sw6306_algo_set_command(SW6306_CMD_PROTOCOL |
                             SW6306_CMD_POWER |
                             SW6306_CMD_LEARN_ENABLE);

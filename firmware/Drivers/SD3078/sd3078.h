@@ -358,8 +358,7 @@ SD3078_RET SD3078_IDLoad(SD3078_NOARG);        //读取芯片ID（72H~79H共8字
 uint8_t SD3078_ReadID(uint8_t idx);            //读取芯片UID单字节（idx 0~7，取初始化时读到的镜像，不发 I2C）
 
 //初始化
-SD3078_RET SD3078_Init(SD3078_NOARG);          //正式初始化；成功返回 I2C_OK，失败返回具体 I2C 错误
-SD3078_RET SD3078_FullInit(SD3078_NOARG);      //完整初始化（在基础配置上追加温度报警阈值）
+SD3078_RET SD3078_Init(SD3078_NOARG);          //统一初始化：低功耗/充电默认值/温度报警；失败返回具体I2C错误
 
 #ifdef __cplusplus
 }

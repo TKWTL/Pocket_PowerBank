@@ -19,11 +19,15 @@
 /* ========================================================================== */
 static struct SC7A20_StatusTypedef SC7A20_Status;//SC7A20状态全局变量
 
-/* X轴校准作用在右对齐后的有效原始码上：
- *   x_mg = (axis_raw - zero_raw) * slope_mg_per_lsb
- * 默认配置为 ±2g / HR，因此名义斜率为 1mg/LSB。 */
+/* 三轴校准都作用在右对齐后的有效原始码上：
+ *   axis_mg = (axis_raw - zero_raw) * slope_mg_per_lsb
+ * 默认配置为 ±2g / HR，因此名义斜率均为 1mg/LSB。 */
 static int16_t s_x_zero_raw = 0;
+static int16_t s_y_zero_raw = 0;
+static int16_t s_z_zero_raw = 0;
 static float s_x_slope_mg_per_lsb = 1.0f;
+static float s_y_slope_mg_per_lsb = 1.0f;
+static float s_z_slope_mg_per_lsb = 1.0f;
 
 /* 各量程灵敏度（单位：mg/digit）
  * HR(12bit) 模式：SC7A20_VERIFIED（官方数据手册明确给出 1/2/4/8 mg/digit）
@@ -213,12 +217,33 @@ void SC7A20_SetXCalibration(int16_t zero_raw, float slope_mg_per_lsb)
 float SC7A20_ReadY_mg(void)//读取Y轴加速度（单位：mg）
 {
     uint8_t hr = (SC7A20_Status.ctrl4 & SC7A20_CTRL4_HR) ? 1 : 0;
-    return (float)sc7a20_raw_to_axis(SC7A20_Status.y, hr) * sc7a20_sensitivity_mg();
+    int16_t raw = sc7a20_raw_to_axis(SC7A20_Status.y, hr);
+    return (float)((int32_t)raw - (int32_t)s_y_zero_raw) * s_y_slope_mg_per_lsb;
 }
+
+void SC7A20_SetYCalibration(int16_t zero_raw, float slope_mg_per_lsb)
+{
+    if(slope_mg_per_lsb > 0.0f)
+    {
+        s_y_zero_raw = zero_raw;
+        s_y_slope_mg_per_lsb = slope_mg_per_lsb;
+    }
+}
+
 float SC7A20_ReadZ_mg(void)//读取Z轴加速度（单位：mg）
 {
     uint8_t hr = (SC7A20_Status.ctrl4 & SC7A20_CTRL4_HR) ? 1 : 0;
-    return (float)sc7a20_raw_to_axis(SC7A20_Status.z, hr) * sc7a20_sensitivity_mg();
+    int16_t raw = sc7a20_raw_to_axis(SC7A20_Status.z, hr);
+    return (float)((int32_t)raw - (int32_t)s_z_zero_raw) * s_z_slope_mg_per_lsb;
+}
+
+void SC7A20_SetZCalibration(int16_t zero_raw, float slope_mg_per_lsb)
+{
+    if(slope_mg_per_lsb > 0.0f)
+    {
+        s_z_zero_raw = zero_raw;
+        s_z_slope_mg_per_lsb = slope_mg_per_lsb;
+    }
 }
 
 /******************************温度操作区**************************************/

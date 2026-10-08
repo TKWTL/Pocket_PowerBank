@@ -222,6 +222,39 @@ i2c_status_type SD3078_AlgoRequestTimeFieldSet(sd3078_time_field_t field, uint8_
 
 /************************** SD3078 RTC时间提交算法结束 **************************/
 
+/************************** SD3078 分层寄存器Load算法开始 ************************/
+/* RTC时间需要界面较快刷新，保持500ms；芯片温度与后备电池电压的硬件更新本身
+ * 是分钟级，因此降到60s。任务层只负责调用不同周期入口，不再直接知道寄存器Load顺序。 */
+i2c_status_type SD3078_AlgoLoadFast(void)
+{
+    return SD3078_TimeLoad();
+}
+
+i2c_status_type SD3078_AlgoLoadSlow(void)
+{
+    i2c_status_type st;
+
+    st = SD3078_TempLoad();
+    if (st != I2C_OK) return st;
+
+    st = SD3078_BattLoad();
+    if (st != I2C_OK) return st;
+
+    return sd3078_algo_apply_charge(sd3078_algo_charge_desired());
+}
+
+i2c_status_type SD3078_AlgoLoadAll(void)
+{
+    i2c_status_type st;
+
+    st = SD3078_TimeLoad();
+    if (st != I2C_OK) return st;
+    st = SD3078_TempLoad();
+    if (st != I2C_OK) return st;
+    return SD3078_BattLoad();
+}
+/************************** SD3078 分层寄存器Load算法结束 ************************/
+
 /************************** SD3078 算法接口与调度开始 ***************************/
 /* 模式修改只更新RAM并标记pending，同时写入NVM；Fast路径处理立即请求，
  * Slow路径约每分钟依据最新VBAT/TEMP复核Auto策略。 */
@@ -271,10 +304,4 @@ i2c_status_type SD3078_AlgoProcessFast(void)
     return I2C_OK;
 }
 
-i2c_status_type SD3078_AlgoProcessSlow(void)
-{
-    /* SD3078 updates VBAT/temperature internally on a minute-scale cadence.
-     * Slow policy evaluation therefore does not need a high-frequency timer. */
-    return sd3078_algo_apply_charge(sd3078_algo_charge_desired());
-}
 /************************** SD3078 算法接口与调度结束 ***************************/

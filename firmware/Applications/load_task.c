@@ -3,9 +3,9 @@
  * 单线程负责 SD3078、SC7A20、NVM 的实际 I2C 提交：
  *  - 10ms：处理 RTC/后备电池 pending（无请求时不访问I2C）；
  *  - 200ms：SC7A20 5Hz 采样 + 上下方向算法；
- *  - 500ms：SD3078 镜像、NVM dirty 合并写、WLED 慢速守护；
- *  - 60s：MS621FE Auto 充电策略复核（SD3078 本身约60s更新VBAT测量）。
- * SW6306 周期采样和业务算法由 SW6306_task 单独负责。
+ *  - 500ms：SD3078 Time Load、NVM dirty 合并写、WLED 慢速守护；
+ *  - 60s：SD3078 Temp/VBAT Load + MS621FE Auto充电策略复核。
+ * 各外设具体Load顺序/分频放在对应algo；task只提供调度节拍。
  */
 #include "applications.h"
 
@@ -13,17 +13,6 @@
  * 决定是否继续使用/重试初始化。 */
 static i2c_status_type s_sd3078_status = I2C_ERR_INTERRUPT;
 static uint8_t s_nvm_ready;
-
-static i2c_status_type sd3078_refresh_mirrors(void)
-{
-    i2c_status_type st;
-
-    st = SD3078_TimeLoad();
-    if (st != I2C_OK) return st;
-    st = SD3078_TempLoad();
-    if (st != I2C_OK) return st;
-    return SD3078_BattLoad();
-}
 
 static void sd3078_try_init(void)
 {
@@ -47,11 +36,16 @@ static void sd3078_try_init(void)
         SW6306_SetBattRShunt(nvm_get_shunt_mohm());
         SC7A20_SetXCalibration(nvm_get_sc7a20_x_zero_raw(),
                                nvm_get_sc7a20_x_slope_mg_per_lsb());
+        SC7A20_SetYCalibration(nvm_get_sc7a20_y_zero_raw(),
+                               nvm_get_sc7a20_y_slope_mg_per_lsb());
+        SC7A20_SetZCalibration(nvm_get_sc7a20_z_zero_raw(),
+                               nvm_get_sc7a20_z_slope_mg_per_lsb());
     }
 
-    /* SD3078_Init 会把充电寄存器恢复为关闭；每次驱动重新初始化后都让
-     * algo 重新装载持久化模式并按策略恢复。 */
+    /* SD3078_Init会把充电寄存器恢复为关闭；algo重新装载持久化模式。
+     * 初始化后立即走一次全量Load，保证Auto充电第一次判定就使用fresh Temp/VBAT。 */
     SD3078_AlgoInit();
+    s_sd3078_status = SD3078_AlgoLoadAll();
 }
 
 /* 一轮完整读取（唤醒预取 / 事件即时刷新）：SD3078 + SC7A20 + SW6306 镜像。
@@ -62,26 +56,21 @@ static void data_refresh_all(void)
 {
     sd3078_try_init();
     if (s_sd3078_status == I2C_OK) {
-        s_sd3078_status = sd3078_refresh_mirrors();
+        s_sd3078_status = SD3078_AlgoLoadAll();
         if (s_sd3078_status == I2C_OK) {
             s_sd3078_status = SD3078_AlgoProcessFast();
         }
     }
-    if (SC7A20_IsInitialized()) {
-        SC7A20_AccelLoad();
-    }
+
+    SC7A20_AlgoLoadSample();
+
     if (SW6306_IsInitialized()) {
-        /* 唤醒预取：SW6306 刚从 LPSet 唤醒，ADC 需时间就绪；
-         * 等待稳定后再读，避免读到未更新的无效 ADC 值。 */
+        /* SW6306刚从LPSet唤醒时ADC需要稳定时间；任务只负责时序，
+         * 真正的寄存器Load顺序由SW6306 algo持有。 */
         if (pm_api_wake_data_ready() == 0) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
-        SW6306_ADCLoad();
-        SW6306_StatusLoad();
-        SW6306_NTCTempLoad();
-        SW6306_PortStatusLoad();
-        SW6306_PowerLoad();
-        SW6306_CapacityLoad();
+        SW6306_AlgoLoadAll();
     }
 }
 
@@ -142,12 +131,7 @@ void load_task(void *pvParameters)
         /* 5Hz SC7A20：只有本周期路径推进姿态计时，确保连续约2s才翻转。 */
         if (++sc7_cnt >= (SC7A20_ALGO_SAMPLE_MS / 10U)) {
             sc7_cnt = 0U;
-            if (SC7A20_IsInitialized()) {
-                SC7A20_AccelLoad();
-                if (SC7A20_IsInitialized()) {
-                    SC7A20_AlgoUpdate(SC7A20_ReadX_mg());
-                }
-            }
+            SC7A20_AlgoLoadSample();
         }
 
         if (pm_api_data_refresh_pending() != 0) {
@@ -166,20 +150,17 @@ void load_task(void *pvParameters)
             }
 
             if (s_sd3078_status == I2C_OK) {
-                s_sd3078_status = sd3078_refresh_mirrors();
+                /* Time保持500ms；Temp/VBAT由Slow入口降到60s。 */
+                s_sd3078_status = SD3078_AlgoLoadFast();
 
-                /* NVM setter 只置 dirty；500ms 合并窗口避免菜单连续步进造成密集 SRAM 写。 */
+                /* NVM setter只置dirty；500ms合并窗口避免菜单连续步进造成密集SRAM写。 */
                 if (s_sd3078_status == I2C_OK && s_nvm_ready && nvm_is_dirty()) {
                     s_sd3078_status = nvm_process();
                 }
 
-                /* Auto 后备电池策略一分钟复核一次已经足够；SD3078 的 VBAT/TEMP
-                 * 硬件自动测量本身也是分钟级。 */
-                if (s_sd3078_status == I2C_OK) {
-                    if (++sd3078_slow_cnt >= 120U) { /* 120×500ms = 60s */
-                        sd3078_slow_cnt = 0U;
-                        s_sd3078_status = SD3078_AlgoProcessSlow();
-                    }
+                if (s_sd3078_status == I2C_OK && ++sd3078_slow_cnt >= 120U) {
+                    sd3078_slow_cnt = 0U;
+                    s_sd3078_status = SD3078_AlgoLoadSlow();
                 }
             }
 

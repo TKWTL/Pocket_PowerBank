@@ -55,10 +55,14 @@ sd3078_backup_charge_mode_t SD3078_AlgoGetBackupChargeMode(void);
 uint8_t SD3078_AlgoIsBackupCharging(void);
 
 /* load_task only:
- * Fast: called every 10ms; produces I2C only when a time/charge request is pending.
- * Slow: called about once/minute after fresh SD3078 mirrors; reevaluates Auto charging. */
+ * ProcessFast: 10ms调用；仅有时间/充电请求时才产生I2C。
+ * LoadFast: 500ms调用；只刷新RTC时间。
+ * LoadSlow: 60s调用；刷新温度+VBAT，并基于fresh镜像复核Auto充电。
+ * LoadAll: 唤醒/初始化预取，强制刷新Time+Temp+VBAT。 */
 i2c_status_type SD3078_AlgoProcessFast(void);
-i2c_status_type SD3078_AlgoProcessSlow(void);
+i2c_status_type SD3078_AlgoLoadFast(void);
+i2c_status_type SD3078_AlgoLoadSlow(void);
+i2c_status_type SD3078_AlgoLoadAll(void);
 
 #ifdef __cplusplus
 }

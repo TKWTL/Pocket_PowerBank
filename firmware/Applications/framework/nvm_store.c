@@ -7,8 +7,12 @@
  *   0x08..0x0B  shunt_mohm (float)
  *   0x0C..0x0D  sc7a20_x_zero_raw (int16)
  *   0x0E..0x11  sc7a20_x_slope_mg_per_lsb (float)
- *   0x12        backup_charge_mode
- *   0x13..0x43  reserved (49B)
+ *   0x12..0x13  sc7a20_y_zero_raw (int16)
+ *   0x14..0x17  sc7a20_y_slope_mg_per_lsb (float)
+ *   0x18..0x19  sc7a20_z_zero_raw (int16)
+ *   0x1A..0x1D  sc7a20_z_slope_mg_per_lsb (float)
+ *   0x1E        backup_charge_mode
+ *   0x1F..0x43  reserved (37B)
  *   0x44..0x45  HW CRC16 over payload[0..67], seeded by layout magic
  */
 #include "nvm_store.h"
@@ -23,11 +27,15 @@
 #define NVM_OFF_SHUNT_MOHM              8U
 #define NVM_OFF_SC7A20_X_ZERO_RAW      12U
 #define NVM_OFF_SC7A20_X_SLOPE         14U
-#define NVM_OFF_BACKUP_CHARGE_MODE     18U
+#define NVM_OFF_SC7A20_Y_ZERO_RAW      18U
+#define NVM_OFF_SC7A20_Y_SLOPE         20U
+#define NVM_OFF_SC7A20_Z_ZERO_RAW      24U
+#define NVM_OFF_SC7A20_Z_SLOPE         26U
+#define NVM_OFF_BACKUP_CHARGE_MODE     30U
 
 /* Bump only when serialized offsets/types change. Normal firmware rebuilds must
  * keep this value so existing NVM remains valid. */
-#define NVM_LAYOUT_CRC_INIT        0x4E04U
+#define NVM_LAYOUT_CRC_INIT        0x4E05U
 
 /* 存储格式明确绑定 32-bit IEEE754 float / 16-bit int16_t。 */
 typedef char nvm_float_must_be_4_bytes[(sizeof(float) == 4U) ? 1 : -1];
@@ -106,6 +114,8 @@ static uint8_t nvm_values_valid(const nvm_values_t *v)
     if (!nvm_float_in_range(v->equivalent_cycles, 0.0f, 1000000.0f)) return 0U;
     if (!nvm_float_in_range(v->shunt_mohm, 0.1f, 20.0f)) return 0U;
     if (!nvm_float_in_range(v->sc7a20_x_slope_mg_per_lsb, 0.1f, 4.0f)) return 0U;
+    if (!nvm_float_in_range(v->sc7a20_y_slope_mg_per_lsb, 0.1f, 4.0f)) return 0U;
+    if (!nvm_float_in_range(v->sc7a20_z_slope_mg_per_lsb, 0.1f, 4.0f)) return 0U;
     if (v->backup_charge_mode > 2U) return 0U;
     return 1U;
 }
@@ -118,6 +128,10 @@ void nvm_reset_defaults(void)
     nvm_data.shunt_mohm = NVM_DEFAULT_SHUNT_MOHM;
     nvm_data.sc7a20_x_zero_raw = NVM_DEFAULT_SC7A20_X_ZERO_RAW;
     nvm_data.sc7a20_x_slope_mg_per_lsb = NVM_DEFAULT_SC7A20_X_SLOPE_MG_PER_LSB;
+    nvm_data.sc7a20_y_zero_raw = NVM_DEFAULT_SC7A20_Y_ZERO_RAW;
+    nvm_data.sc7a20_y_slope_mg_per_lsb = NVM_DEFAULT_SC7A20_Y_SLOPE_MG_PER_LSB;
+    nvm_data.sc7a20_z_zero_raw = NVM_DEFAULT_SC7A20_Z_ZERO_RAW;
+    nvm_data.sc7a20_z_slope_mg_per_lsb = NVM_DEFAULT_SC7A20_Z_SLOPE_MG_PER_LSB;
     nvm_data.backup_charge_mode = NVM_DEFAULT_BACKUP_CHARGE_MODE;
     s_nvm_valid = 0U;
     s_nvm_dirty = 0U;
@@ -167,6 +181,10 @@ i2c_status_type nvm_load(void)
     tmp.shunt_mohm = nvm_unpack_float(&block[NVM_OFF_SHUNT_MOHM]);
     tmp.sc7a20_x_zero_raw = nvm_unpack_i16(&block[NVM_OFF_SC7A20_X_ZERO_RAW]);
     tmp.sc7a20_x_slope_mg_per_lsb = nvm_unpack_float(&block[NVM_OFF_SC7A20_X_SLOPE]);
+    tmp.sc7a20_y_zero_raw = nvm_unpack_i16(&block[NVM_OFF_SC7A20_Y_ZERO_RAW]);
+    tmp.sc7a20_y_slope_mg_per_lsb = nvm_unpack_float(&block[NVM_OFF_SC7A20_Y_SLOPE]);
+    tmp.sc7a20_z_zero_raw = nvm_unpack_i16(&block[NVM_OFF_SC7A20_Z_ZERO_RAW]);
+    tmp.sc7a20_z_slope_mg_per_lsb = nvm_unpack_float(&block[NVM_OFF_SC7A20_Z_SLOPE]);
     tmp.backup_charge_mode = block[NVM_OFF_BACKUP_CHARGE_MODE];
 
     if (!nvm_values_valid(&tmp)) {
@@ -203,6 +221,10 @@ i2c_status_type nvm_save(void)
     nvm_pack_float(&block[NVM_OFF_SHUNT_MOHM], snap.shunt_mohm);
     nvm_pack_i16(&block[NVM_OFF_SC7A20_X_ZERO_RAW], snap.sc7a20_x_zero_raw);
     nvm_pack_float(&block[NVM_OFF_SC7A20_X_SLOPE], snap.sc7a20_x_slope_mg_per_lsb);
+    nvm_pack_i16(&block[NVM_OFF_SC7A20_Y_ZERO_RAW], snap.sc7a20_y_zero_raw);
+    nvm_pack_float(&block[NVM_OFF_SC7A20_Y_SLOPE], snap.sc7a20_y_slope_mg_per_lsb);
+    nvm_pack_i16(&block[NVM_OFF_SC7A20_Z_ZERO_RAW], snap.sc7a20_z_zero_raw);
+    nvm_pack_float(&block[NVM_OFF_SC7A20_Z_SLOPE], snap.sc7a20_z_slope_mg_per_lsb);
     block[NVM_OFF_BACKUP_CHARGE_MODE] = snap.backup_charge_mode;
 
     crc = nvm_crc16(block);
@@ -321,6 +343,58 @@ void nvm_set_sc7a20_x_slope_mg_per_lsb(float value)
 {
     taskENTER_CRITICAL();
     nvm_data.sc7a20_x_slope_mg_per_lsb = value;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
+}
+
+int16_t nvm_get_sc7a20_y_zero_raw(void)
+{
+    return nvm_data.sc7a20_y_zero_raw;
+}
+
+void nvm_set_sc7a20_y_zero_raw(int16_t value)
+{
+    taskENTER_CRITICAL();
+    nvm_data.sc7a20_y_zero_raw = value;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
+}
+
+float nvm_get_sc7a20_y_slope_mg_per_lsb(void)
+{
+    return nvm_data.sc7a20_y_slope_mg_per_lsb;
+}
+
+void nvm_set_sc7a20_y_slope_mg_per_lsb(float value)
+{
+    taskENTER_CRITICAL();
+    nvm_data.sc7a20_y_slope_mg_per_lsb = value;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
+}
+
+int16_t nvm_get_sc7a20_z_zero_raw(void)
+{
+    return nvm_data.sc7a20_z_zero_raw;
+}
+
+void nvm_set_sc7a20_z_zero_raw(int16_t value)
+{
+    taskENTER_CRITICAL();
+    nvm_data.sc7a20_z_zero_raw = value;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
+}
+
+float nvm_get_sc7a20_z_slope_mg_per_lsb(void)
+{
+    return nvm_data.sc7a20_z_slope_mg_per_lsb;
+}
+
+void nvm_set_sc7a20_z_slope_mg_per_lsb(float value)
+{
+    taskENTER_CRITICAL();
+    nvm_data.sc7a20_z_slope_mg_per_lsb = value;
     s_nvm_dirty = 1U;
     taskEXIT_CRITICAL();
 }

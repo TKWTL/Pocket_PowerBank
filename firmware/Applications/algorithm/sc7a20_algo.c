@@ -63,6 +63,16 @@ sc7a20_orientation_t SC7A20_AlgoGetOrientation(void)
 {
     return s_orientation;
 }
+
+void SC7A20_AlgoLoadSample(void)
+{
+    if (!SC7A20_IsInitialized()) return;
+
+    SC7A20_AccelLoad();
+    if (SC7A20_IsInitialized()) {
+        SC7A20_AlgoUpdate(SC7A20_ReadX_mg());
+    }
+}
 /************************* SC7A20 180°姿态判断算法结束 **************************/
 
 /*********************** SC7A20 低功耗唤醒策略算法开始 ************************/

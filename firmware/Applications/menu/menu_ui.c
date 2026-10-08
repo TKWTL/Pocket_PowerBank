@@ -221,16 +221,15 @@ static void fmt_item_text(const menu_item_t *it, bool editing, bool selected, ch
     }
 }
 
-/* ---------- 文本宽度限制（按"英文字符数"处理） ----------
- * 两种角色：
- *   - 中间当前项：14 个英文宽度内不滚，超出循环滚动（SCROLL_CIRCULAR）；
- *   - 角落/动画项：超过 12 个英文字符直接截断（DOTS），省略号由 LVGL 加。
- * 为什么角落是"截断字符"而不是"压窄 box"：等宽字体里大写字母比空格宽，
- * 把 box 压到 12 个空格宽时一行放不下——LVGL 会退化成**逐字符换行**，
- * 于是 LABEL 变成一列竖排字。截断文本长度则始终只占一行，不会再出现竖排。
- * 中间项用滚动，本来就不会换行。 */
-#define MENU_TEXT_SCROLL_CHARS   14U   /* 中间项：14 个英文宽度内不滚 */
-#define MENU_TEXT_CORNER_CHARS   12U   /* 角落/动画项：超过 12 个英文字符即截断 */
+/* ---------- 文本宽度处理（按实测像素，不再按"字符数估算"） ----------
+ * 分两个角色：
+ *   - 中间当前项：box 上限 = 14 个字符宽；超过则由 SCROLL_CIRCULAR 循环滚动；
+ *   - 角落/动画项：box 直接贴合文本实测宽度，只要不超出屏幕就完整显示，
+ *     只有真要越过右边界时才从尾部修剪（UTF-8 边界）。
+ * 历史教训：曾经用"12 × 空格步进"当角落 box 上限，实测这条路线会把 box 压得
+ * 比文字窄（Display 只有 56px 都被截成 "Dis..."），所以现在一律以
+ * lv_text_get_size() 的实测宽度为准，只保证"别超出屏幕"。 */
+#define MENU_TEXT_SCROLL_CHARS   14U   /* 中间项：超过 14 个字符宽才开始滚动 */
 
 static int32_t menu_char_w(const lv_obj_t *lbl)
 {
@@ -240,19 +239,15 @@ static int32_t menu_char_w(const lv_obj_t *lbl)
     if (f == NULL || f->line_height <= 0) {
         return 8;   /* 兜底：按 8px 字宽估算 */
     }
-    /* 空格步进 = 字符宽（等宽字体） */
     w = lv_font_get_glyph_width(f, ' ', ' ');
     return (w > 0) ? w : 8;
 }
 
-/* 为 label 设定 box 宽度上限（不超过屏宽）：
- *  - scroll=1：上限 14 个英文宽，超出由 SCROLL_CIRCULAR 滚动；
- *  - scroll=0：上限 12 个英文宽，超出的字符已被截断，不会换行。 */
+/* 中间项：box 上限 = 14 个字符宽（不超屏），超出交给 SCROLL_CIRCULAR 滚动 */
 static void label_fit_box(lv_obj_t *lbl, uint8_t scroll)
 {
-    int32_t cw    = menu_char_w(lbl);
-    int32_t cap   = (scroll != 0U) ? (int32_t)MENU_TEXT_SCROLL_CHARS * cw
-                                   : (int32_t)MENU_TEXT_CORNER_CHARS * cw;
+    int32_t cap   = (scroll != 0U) ? (int32_t)MENU_TEXT_SCROLL_CHARS * menu_char_w(lbl)
+                                   : MENU_SCR_W;
     int32_t want  = lv_obj_get_self_width(lbl);
     int32_t limit = (want < cap) ? want : cap;
 
@@ -276,65 +271,54 @@ static void item_recenter(lv_obj_t *label)
  * lv_obj_set_x()，导致角落项滑不出屏幕而变成固定遮罩。 */
 static void pos_next_corner(lv_obj_t *lbl)
 {
-    label_fit_box(lbl, 0U);
     lv_obj_update_layout(lbl);
     lv_obj_set_pos(lbl, MENU_SCR_W - lv_obj_get_width(lbl) - MENU_CORNER_X, MENU_ROW_BOT_Y);
 }
 
-/* 左上角定位：同样先限宽再复位到 (1,-1)。
- * 统一走这个函数，避免各处直接 lv_obj_set_pos 时漏掉限宽。 */
+/* 左上角定位：统一走这里，避免各处直接 lv_obj_set_pos 时漏掉前处理 */
 static void pos_prev_corner(lv_obj_t *lbl)
 {
-    label_fit_box(lbl, 0U);
     lv_obj_set_pos(lbl, MENU_CORNER_X, MENU_ROW_TOP_Y);
 }
 
-/* 角落文本：按【像素预算】修剪后写入，box 直接等于修剪后文本的真实宽度。
- * 为什么要量真实宽度：等宽字体里大写字母比空格宽，若按"12 个空格宽"给 box，
- * 12 个大写字母就放不下——LVGL 会换行（DOTS 的触发条件正是"已经多行"），
- * 于是一个字符一行，看上去就是竖排。
- * 这里用 lv_text_get_size() 量出文本真实像素宽，超预算时逐字符（UTF-8 边界）
- * 回退，最后把 box 设成修剪后文本的宽度：一行的宽度装一行的文字，必然不换行。 */
+/* 角落文本：box 贴合实测宽度；只有超过"到右边界还剩多少"时才从尾部修剪。
+ * 短文案（Display、Sleep & Wake 之类）因此不会被无谓截断。 */
 static void corner_set_text(lv_obj_t *lbl, const char *text)
 {
     const lv_font_t *font = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
-    int32_t budget = (int32_t)MENU_TEXT_CORNER_CHARS * menu_char_w(lbl);
+    int32_t limit = MENU_SCR_W - MENU_CORNER_X;   /* 角落起点在屏内，最多能占这么宽 */
     lv_point_t sz;
-    size_t cut, len;
-    char tmp[96];   /* 角落里最多十几个字符，栈上足够，避免 malloc */
+    char tmp[96];
 
     if (text == NULL) {
         text = "";
     }
-    if (budget > MENU_SCR_W) {
-        budget = MENU_SCR_W;
+    if (strlen(text) >= sizeof(tmp)) {
+        text = "";   /* 异常超长：宁可空，也不越界拷贝 */
+    } else {
+        memcpy(tmp, text, strlen(text) + 1U);
     }
 
-    lv_text_get_size(&sz, text, font, 0, 0, budget, LV_TEXT_FLAG_NONE);
-    if (sz.x <= budget) {
-        lv_label_set_text(lbl, text);
-        /* box = 实测宽度 +2px 安全余量：只要 box 放得下，LVGL 就没有换行的理由 */
+    lv_text_get_size(&sz, tmp, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    if (sz.x <= limit) {
+        lv_label_set_text(lbl, tmp);
         lv_obj_set_width(lbl, (sz.x > 0) ? (sz.x + 2) : 1);
         return;
     }
 
-    /* 超预算：抄进栈缓冲后按 UTF-8 字符边界从尾部回退，直到宽度落进预算 */
-    len = strlen(text);
-    if (len >= sizeof(tmp)) {
-        len = sizeof(tmp) - 1U;
-    }
-    memcpy(tmp, text, len);
-    tmp[len] = '\0';
-    cut = len;
-    while (cut > 0U) {
-        cut--;
-        while (cut > 0U && ((uint8_t)tmp[cut] & 0xC0U) == 0x80U) {
-            cut--;   /* 回退到 UTF-8 字符起始字节 */
-        }
-        tmp[cut] = '\0';
-        lv_text_get_size(&sz, tmp, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        if (sz.x <= budget) {
-            break;
+    /* 超宽：按 UTF-8 字符边界从尾部回退，直到宽度落进可用范围 */
+    {
+        size_t cut = strlen(tmp);
+        while (cut > 0U) {
+            cut--;
+            while (cut > 0U && ((uint8_t)tmp[cut] & 0xC0U) == 0x80U) {
+                cut--;   /* 回退到 UTF-8 字符起始字节 */
+            }
+            tmp[cut] = '\0';
+            lv_text_get_size(&sz, tmp, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+            if (sz.x <= limit) {
+                break;
+            }
         }
     }
     lv_label_set_text(lbl, tmp);
@@ -930,7 +914,7 @@ static void icon_redraw(const menu_state_t *st, const menu_page_t *pg)
     {
         const menu_icon_t *mi = &pg->icons[st->index];
         lv_label_set_text(s_icon_hint, (mi && mi->label) ? menu_tr(mi->label) : "");
-        label_fit_box(s_icon_hint, 0U);   /* 图标名过长按 12 英文宽截断（顶部文字条） */
+        label_fit_box(s_icon_hint, 0U);   /* 图标名超出剩宽才截断（顶部文字条，右侧留给时间） */
     }
 
     /* 刚进入图标页（打开菜单/页面切换）：head_x 定位到保存值，图标直接到位 */
@@ -1119,7 +1103,7 @@ lv_obj_t *menu_ui_create(void)
 
     s_item_prev = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);      /* 左上：上一项（灰） */
-    lv_label_set_long_mode(s_item_prev, LV_LABEL_LONG_MODE_DOTS);    /* 角落：超 12 英文宽截断 */
+    lv_label_set_long_mode(s_item_prev, LV_LABEL_LONG_MODE_DOTS);    /* 角落：超屏宽才截断 */
     lv_obj_set_height(s_item_prev, one_line);
     corner_set_text(s_item_prev, "");
 
@@ -1129,8 +1113,7 @@ lv_obj_t *menu_ui_create(void)
     lv_obj_set_height(s_item_next, one_line);
     corner_set_text(s_item_next, "");
 
-    /* 角落滑入标签：动画期间从屏外滑入（下下一项/上上一项），与角落同层。
-     * 这里就先按 12 英文宽限好 box，滑入过程中与静止态宽度一致。 */
+    /* 角落滑入标签：动画期间从屏外滑入（下下一项/上上一项），与角落同层 */
     s_item_next_in = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_next_in, MENU_SCR_W, MENU_ROW_BOT_Y);
     lv_label_set_long_mode(s_item_next_in, LV_LABEL_LONG_MODE_DOTS);

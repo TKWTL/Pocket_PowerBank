@@ -37,7 +37,7 @@ sw6306_algo_config_t SW6306_AlgoConfig = {
     45, 30              /* output/input W */
 };
 
-/*** 通用命令请求机制开始 ***/
+/***************************** 通用命令请求机制开始 *****************************/
 /* UI/算法只置 RAM bit；真正的 SW6306 寄存器写由 SW6306_task 调用
  * SW6306_AlgoProcessCommands() 串行执行，避免 UI 线程直接发 I2C。 */
 static volatile uint8_t s_commands;
@@ -66,9 +66,9 @@ static void sw6306_algo_restore_commands(uint8_t mask)
     s_commands |= mask;
     taskEXIT_CRITICAL();
 }
-/*** 通用命令请求机制结束 ***/
+/***************************** 通用命令请求机制结束 *****************************/
 
-/*** 容量学习算法开始 ***/
+/******************************* 容量学习算法开始 *******************************/
 /* 容量学习固定常开，不再提供 UI enable。
  * “确保 LEARNEN=1”和“清 LEARN_END 重新武装”必须分离：
  *   1. 上电/驱动重初始化只设置 LEARNEN，不清完成标志；
@@ -88,9 +88,9 @@ static void sw6306_algo_update_capacity_learning(void)
     }
     s_learn_state = now;
 }
-/*** 容量学习算法结束 ***/
+/******************************* 容量学习算法结束 *******************************/
 
-/*** EFC 容量统计算法开始 ***/
+/***************************** EFC 容量统计算法开始 *****************************/
 /* SW6306 内部能量计负责积分，MCU 不做 V*I*time。
  * 每个连续放电 session 开始时锁存 E_start 与当时的 E_full；
  * 结束时使用最后一个明确处于放电态的 E_end：
@@ -232,11 +232,11 @@ void SW6306_AlgoUpdate(void)
         sw6306_algo_finalize_session(s_session.candidate_end_mwh);
     }
 }
-/*** EFC 容量统计算法结束 ***/
+/***************************** EFC 容量统计算法结束 *****************************/
 
 
 
-/*** SW6306 配置应用算法开始 ***/
+/*************************** SW6306 配置应用算法开始 ****************************/
 /* 协议、功率、容量学习常开、SOH基准记录和手动重初始化都由命令位合并，
  * 只在 SW6306_task 中执行实际寄存器操作。 */
 void SW6306_AlgoProcessCommands(void)
@@ -320,9 +320,9 @@ void SW6306_AlgoOnDriverReinitialized(void)
                             SW6306_CMD_POWER |
                             SW6306_CMD_LEARN_ENABLE);
 }
-/*** SW6306 配置应用算法结束 ***/
+/*************************** SW6306 配置应用算法结束 ****************************/
 
-/*** UI/菜单请求接口开始 ***/
+/***************************** UI/菜单请求接口开始 ******************************/
 void SW6306_AlgoRequestProtocolApply(void)
 {
     sw6306_algo_set_command(SW6306_CMD_PROTOCOL);
@@ -352,9 +352,9 @@ void SW6306_AlgoRequestReinit(void)
 {
     sw6306_algo_set_command(SW6306_CMD_REINIT);
 }
-/*** UI/菜单请求接口结束 ***/
+/***************************** UI/菜单请求接口结束 ******************************/
 
-/*** SOH / 统计结果读取算法开始 ***/
+/************************** SOH / 统计结果读取算法开始 **************************/
 /* SOH 使用 SW6306 最近一次学习得到的满能量与 NVM 中手动记录的出厂基准相比；
  * EFC 则直接读取每个放电 session 累加后的 NVM 值。 */
 float SW6306_AlgoGetSOHPercent(void)
@@ -374,4 +374,4 @@ uint8_t SW6306_AlgoDischargeSessionActive(void)
 {
     return s_session.active;
 }
-/*** SOH / 统计结果读取算法结束 ***/
+/************************** SOH / 统计结果读取算法结束 **************************/

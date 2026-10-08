@@ -17,7 +17,7 @@ typedef struct {
 
 static sd3078_algo_state_t s_algo;
 
-/*** SD3078 后备电池充电算法开始 ***/
+/************************* SD3078 后备电池充电算法开始 **************************/
 /* MS621FE支持 Off / On / Auto。所有模式都受电池过压与温度硬保护；
  * Auto使用2.95V启充、3.10V停充迟滞，避免阈值附近反复开关。
  * 充电动作统一由load_task调用算法调度后执行，不从UI直接发I2C。 */
@@ -76,9 +76,9 @@ static uint8_t sd3078_algo_charge_desired(void)
     }
 }
 
-/*** SD3078 后备电池充电算法结束 ***/
+/************************* SD3078 后备电池充电算法结束 **************************/
 
-/*** SD3078 RTC时间提交算法开始 ***/
+/************************** SD3078 RTC时间提交算法开始 **************************/
 /* UI只提交被修改字段的RAM mask。真正写入前重新读取当前RTC，
  * 只覆盖用户改过的字段，再按SD3078要求整组写回00H~06H；
  * I2C失败时把mask恢复，等待下次重试，避免丢失用户修改。 */
@@ -220,9 +220,9 @@ i2c_status_type SD3078_AlgoRequestTimeFieldSet(sd3078_time_field_t field, uint8_
     return I2C_OK;
 }
 
-/*** SD3078 RTC时间提交算法结束 ***/
+/************************** SD3078 RTC时间提交算法结束 **************************/
 
-/*** SD3078 算法接口与调度开始 ***/
+/************************** SD3078 算法接口与调度开始 ***************************/
 /* 模式修改只更新RAM并标记pending，同时写入NVM；Fast路径处理立即请求，
  * Slow路径约每分钟依据最新VBAT/TEMP复核Auto策略。 */
 i2c_status_type SD3078_AlgoSetBackupChargeMode(sd3078_backup_charge_mode_t mode)
@@ -277,4 +277,4 @@ i2c_status_type SD3078_AlgoProcessSlow(void)
      * Slow policy evaluation therefore does not need a high-frequency timer. */
     return sd3078_algo_apply_charge(sd3078_algo_charge_desired());
 }
-/*** SD3078 算法接口与调度结束 ***/
+/************************** SD3078 算法接口与调度结束 ***************************/

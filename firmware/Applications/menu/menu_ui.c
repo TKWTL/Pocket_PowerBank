@@ -243,22 +243,48 @@ static int32_t menu_char_w(const lv_obj_t *lbl)
     return (w > 0) ? w : 8;
 }
 
-/* 中间项：box 上限 = 14 个字符宽（不超屏），超出交给 SCROLL_CIRCULAR 滚动。
- * +2px 余量：文本宽度正好等于上限时（如 "Sleep & Wake >" = 14 字符 = 112px），
- * 若实测多出 1px，box 就会比文字窄而被 LVGL 判成溢出、走 DOTS 截断成
- * "Sleep..."。宁可 box 宽 2px，也不要卡在边界上被裁。 */
+/* 把 label 的外框宽度设成"内容区恰好等于 text_w"。
+ * 关键：lv_obj_set_width() 设的是外框，LVGL 排版用的是内容区
+ * （lv_obj_get_content_coords() = 外框 - padding），所以只要 label 有任何
+ * padding，把外框设成文本宽就会让内容区比文本窄 → 换行 → DOTS 截断成 "..."
+ * （这正是中间项出现 Sleep... 的原因）。
+ * 这里读回实际内容区做自校正：差值补到外框上，padding 来自哪里都不影响。 */
+static void fit_label_to_text_width(lv_obj_t *lbl, int32_t text_w, int32_t cap)
+{
+    int32_t box = text_w + 2;
+    uint8_t guard;
+
+    if (text_w < 1) {
+        lv_obj_set_width(lbl, 1);
+        return;
+    }
+    if (box > cap) box = cap;
+
+    for (guard = 0U; guard < 4U; guard++) {
+        lv_area_t coords;
+        int32_t inner;
+
+        lv_obj_set_width(lbl, box);
+        lv_obj_update_layout(lbl);
+        lv_obj_get_content_coords(lbl, &coords);
+        inner = lv_area_get_width(&coords);
+        if (inner >= text_w || box >= cap) {
+            break;   /* 装得下，或已到上限（上限内仍装不下就只能截断/滚动） */
+        }
+        box += (text_w - inner);
+        if (box > cap) box = cap;
+    }
+}
+
+/* 中间项：box 上限 = 14 个字符宽（不超屏），超出交给 SCROLL_CIRCULAR 滚动。 */
 static void label_fit_box(lv_obj_t *lbl, uint8_t scroll)
 {
-    int32_t cap   = (scroll != 0U) ? ((int32_t)MENU_TEXT_SCROLL_CHARS * menu_char_w(lbl) + 2)
-                                   : MENU_SCR_W;
-    int32_t want  = lv_obj_get_self_width(lbl);
-    int32_t limit = (want < cap) ? (want + 2) : cap;
+    int32_t cap  = (scroll != 0U) ? ((int32_t)MENU_TEXT_SCROLL_CHARS * menu_char_w(lbl) + 2)
+                                  : MENU_SCR_W;
+    int32_t want = lv_obj_get_self_width(lbl);
 
-    if (limit > MENU_SCR_W) limit = MENU_SCR_W;
-    if (limit < 1) limit = 1;
-    if (lv_obj_get_width(lbl) != limit) {
-        lv_obj_set_width(lbl, limit);
-    }
+    if (cap > MENU_SCR_W) cap = MENU_SCR_W;
+    fit_label_to_text_width(lbl, want, cap);
 }
 
 /* 把 label 水平居中（手动定位，不依赖对齐） */
@@ -305,11 +331,11 @@ static void corner_set_text(lv_obj_t *lbl, const char *text)
     lv_text_get_size(&sz, tmp, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     if (sz.x <= limit) {
         lv_label_set_text(lbl, tmp);
-        lv_obj_set_width(lbl, (sz.x > 0) ? (sz.x + 2) : 1);
+        fit_label_to_text_width(lbl, sz.x, MENU_SCR_W);   /* 角落：只受屏幕宽度限制 */
         return;
     }
 
-    /* 超宽：按 UTF-8 字符边界从尾部回退，直到宽度落进可用范围 */
+    /* 超宽：按 UTF-8 字符边界从尾部回退，直到宽度落进可用范围（先保证单行） */
     {
         size_t cut = strlen(tmp);
         while (cut > 0U) {
@@ -324,8 +350,14 @@ static void corner_set_text(lv_obj_t *lbl, const char *text)
             }
         }
     }
-    lv_label_set_text(lbl, tmp);
-    lv_obj_set_width(lbl, (sz.x > 0) ? (sz.x + 2) : 1);
+    /* 修剪后必须用真实（读回内容区自校正的）宽度定 box，否则又会因为 padding
+     * 比文本窄而被 LVGL 二次截断成 "..." */
+    {
+        lv_point_t fit;
+        lv_text_get_size(&fit, tmp, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        lv_label_set_text(lbl, tmp);
+        fit_label_to_text_width(lbl, fit.x, MENU_SCR_W);
+    }
 }
 
 /* ---------- 条目配色（必须定义在所有使用它的函数之前） ----------

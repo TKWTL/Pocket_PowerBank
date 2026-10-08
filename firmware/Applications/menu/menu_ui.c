@@ -289,26 +289,56 @@ static void pos_prev_corner(lv_obj_t *lbl)
     lv_obj_set_pos(lbl, MENU_CORNER_X, MENU_ROW_TOP_Y);
 }
 
-/* 角落文本：先按英文字符数截断，再写文本 + 限宽。
- * 文本与宽度必须同源写入，否则 box 会留着上一个条目的宽度。 */
+/* 角落文本：按【像素预算】修剪后写入，box 直接等于修剪后文本的真实宽度。
+ * 为什么要量真实宽度：等宽字体里大写字母比空格宽，若按"12 个空格宽"给 box，
+ * 12 个大写字母就放不下——LVGL 会换行（DOTS 的触发条件正是"已经多行"），
+ * 于是一个字符一行，看上去就是竖排。
+ * 这里用 lv_text_get_size() 量出文本真实像素宽，超预算时逐字符（UTF-8 边界）
+ * 回退，最后把 box 设成修剪后文本的宽度：一行的宽度装一行的文字，必然不换行。 */
 static void corner_set_text(lv_obj_t *lbl, const char *text)
 {
-    char cut[MENU_TEXT_CORNER_CHARS + 1U];
-    size_t n;
+    const lv_font_t *font = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+    int32_t budget = (int32_t)MENU_TEXT_CORNER_CHARS * menu_char_w(lbl);
+    lv_point_t sz;
+    size_t cut, len;
+    char tmp[96];   /* 角落里最多十几个字符，栈上足够，避免 malloc */
 
     if (text == NULL) {
         text = "";
     }
-    /* 截到 12 个字符（按字节数——英文文案都是 ASCII，一个字节一个字符） */
-    n = strlen(text);
-    if (n > (size_t)MENU_TEXT_CORNER_CHARS) {
-        n = (size_t)MENU_TEXT_CORNER_CHARS;
+    if (budget > MENU_SCR_W) {
+        budget = MENU_SCR_W;
     }
-    memcpy(cut, text, n);
-    cut[n] = '\0';
 
-    lv_label_set_text(lbl, cut);
-    label_fit_box(lbl, 0U);
+    lv_text_get_size(&sz, text, font, 0, 0, budget, LV_TEXT_FLAG_NONE);
+    if (sz.x <= budget) {
+        lv_label_set_text(lbl, text);
+        /* box = 实测宽度 +2px 安全余量：只要 box 放得下，LVGL 就没有换行的理由 */
+        lv_obj_set_width(lbl, (sz.x > 0) ? (sz.x + 2) : 1);
+        return;
+    }
+
+    /* 超预算：抄进栈缓冲后按 UTF-8 字符边界从尾部回退，直到宽度落进预算 */
+    len = strlen(text);
+    if (len >= sizeof(tmp)) {
+        len = sizeof(tmp) - 1U;
+    }
+    memcpy(tmp, text, len);
+    tmp[len] = '\0';
+    cut = len;
+    while (cut > 0U) {
+        cut--;
+        while (cut > 0U && ((uint8_t)tmp[cut] & 0xC0U) == 0x80U) {
+            cut--;   /* 回退到 UTF-8 字符起始字节 */
+        }
+        tmp[cut] = '\0';
+        lv_text_get_size(&sz, tmp, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        if (sz.x <= budget) {
+            break;
+        }
+    }
+    lv_label_set_text(lbl, tmp);
+    lv_obj_set_width(lbl, (sz.x > 0) ? (sz.x + 2) : 1);
 }
 
 /* ---------- 条目配色（必须定义在所有使用它的函数之前） ----------
@@ -1061,29 +1091,42 @@ static void menu_ui_anim_tick(lv_timer_t *t)
 /* ---------- 创建 / 重绘 ---------- */
 lv_obj_t *menu_ui_create(void)
 {
+    int32_t one_line;   /* 一行文字的高度：所有文本 label 都锁成一行高 */
+
     s_scr = lv_obj_create(NULL);
     lv_obj_remove_style_all(s_scr);
     lv_obj_set_size(s_scr, MENU_SCR_W, MENU_SCR_H);
+
+    /* 兜底防"竖排"：文本 label 的 box 高度固定为一行。即使文本因任何原因被判定
+     * 需要换行，也只会裁掉多出来的行，不会画出多行/竖排的字。 */
+    one_line = lv_font_get_line_height(lv_obj_get_style_text_font(s_scr, LV_PART_MAIN));
+    if (one_line < 1) {
+        one_line = 14;
+    }
 
     /* 文本页对角线布局（全部主界面字体 = LV_FONT_DEFAULT = jetbrains_mono_14） */
     s_header = lv_label_create(s_scr);
     lv_obj_set_pos(s_header, MENU_CORNER_X - 1, MENU_ROW_BOT_Y - 1);   /* 左下：菜单名称（左/上各 1px） */
     lv_obj_set_style_text_font(s_header, &lv_font_montserrat_12, 0);
+    lv_obj_set_height(s_header, one_line);
     lv_label_set_text(s_header, "");
 
     s_indicator = lv_label_create(s_scr);
     lv_obj_align(s_indicator, LV_ALIGN_TOP_RIGHT, -3, 0);      /* 右上：页码/EDIT */
     lv_obj_set_style_text_font(s_indicator, &lv_font_montserrat_12, 0);
+    lv_obj_set_height(s_indicator, one_line);
     lv_label_set_text(s_indicator, "");
 
     s_item_prev = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);      /* 左上：上一项（灰） */
     lv_label_set_long_mode(s_item_prev, LV_LABEL_LONG_MODE_DOTS);    /* 角落：超 12 英文宽截断 */
+    lv_obj_set_height(s_item_prev, one_line);
     corner_set_text(s_item_prev, "");
 
     s_item_next = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_next, MENU_SCR_W, MENU_ROW_BOT_Y);    /* 右下：下一项（灰，redraw 时正确定位） */
     lv_label_set_long_mode(s_item_next, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_item_next, one_line);
     corner_set_text(s_item_next, "");
 
     /* 角落滑入标签：动画期间从屏外滑入（下下一项/上上一项），与角落同层。
@@ -1091,12 +1134,14 @@ lv_obj_t *menu_ui_create(void)
     s_item_next_in = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_next_in, MENU_SCR_W, MENU_ROW_BOT_Y);
     lv_label_set_long_mode(s_item_next_in, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_item_next_in, one_line);
     corner_set_text(s_item_next_in, "");
     lv_obj_add_flag(s_item_next_in, LV_OBJ_FLAG_HIDDEN);
 
     s_item_prev_in = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_prev_in, -MENU_SCR_W, MENU_ROW_TOP_Y);
     lv_label_set_long_mode(s_item_prev_in, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_item_prev_in, one_line);
     corner_set_text(s_item_prev_in, "");
     lv_obj_add_flag(s_item_prev_in, LV_OBJ_FLAG_HIDDEN);
 
@@ -1108,11 +1153,13 @@ lv_obj_t *menu_ui_create(void)
     s_item = lv_label_create(s_scr);
     lv_obj_set_pos(s_item, 0, MENU_ROW_MID_Y);                    /* 中间：当前项（x/y 由动画/居中控制） */
     lv_label_set_long_mode(s_item, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    lv_obj_set_height(s_item, one_line);
     lv_label_set_text(s_item, "");
 
     s_item_in = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_in, 0, MENU_ROW_MID_Y);
     lv_label_set_long_mode(s_item_in, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    lv_obj_set_height(s_item_in, one_line);
     lv_label_set_text(s_item_in, "");
     lv_obj_add_flag(s_item_in, LV_OBJ_FLAG_HIDDEN);
 
@@ -1121,12 +1168,14 @@ lv_obj_t *menu_ui_create(void)
     lv_obj_set_pos(s_icon_hint, 3, ICON_TOP_Y);
     lv_obj_set_style_text_font(s_icon_hint, &lv_font_montserrat_12, 0);
     lv_label_set_long_mode(s_icon_hint, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_icon_hint, one_line);
     lv_label_set_text(s_icon_hint, "");
     lv_obj_add_flag(s_icon_hint, LV_OBJ_FLAG_HIDDEN);
 
     s_icon_clock = lv_label_create(s_scr);
     lv_obj_align(s_icon_clock, LV_ALIGN_TOP_RIGHT, -3, ICON_TOP_Y);
     lv_obj_set_style_text_font(s_icon_clock, &lv_font_montserrat_12, 0);
+    lv_obj_set_height(s_icon_clock, one_line);
     lv_label_set_text(s_icon_clock, "--:--");
     lv_obj_add_flag(s_icon_clock, LV_OBJ_FLAG_HIDDEN);
 

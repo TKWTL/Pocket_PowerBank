@@ -1,7 +1,8 @@
 /*
  * sw6306_algo.h - SW6306 application policy/state machines
  *
- * No task is created here. SW6306_task is the single writer/executor.
+ * No task is created here. Normal register writes are serialized by SW6306_task;
+ * pm_device may call the dedicated suspend/resume hooks during the bus-safe PM window.
  */
 #ifndef SW6306_ALGO_H
 #define SW6306_ALGO_H
@@ -44,6 +45,10 @@ void SW6306_AlgoUpdate(void);
 void SW6306_AlgoProcessCommands(void);
 void SW6306_AlgoInvalidateDischargeSession(void);
 void SW6306_AlgoOnDriverReinitialized(void);  /* SW6306_task: 重新应用算法层配置 */
+
+/* pm_device callbacks：SW6306低功耗/恢复策略由算法层统一持有。 */
+void SW6306_AlgoPmSuspend(void *ctx);
+void SW6306_AlgoPmResume(void *ctx);
 
 /* UI/menu thread: RAM-only requests; no I2C. */
 void SW6306_AlgoRequestProtocolApply(void);

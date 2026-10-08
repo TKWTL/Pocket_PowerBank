@@ -220,6 +220,9 @@ static int32_t s_sleep_idx = 4;             /* 自动休眠：ENUM 选项下标�
  * 与背光一样是运行时设置，未持久化。 */
 static uint8_t s_auto_flip = 0;
 
+/* Pickup/Motion Wake 开关状态直接存放在 SC7A20_AlgoConfig 中：
+ * 菜单只改RAM变量，具体休眠时保留10Hz还是Power-down由SC7A20算法PM回调决定。 */
+
 /* 占位动作：用于"界面先立起来、功能待接入"的条目（Sleep & Wake / System 里若干项）。
  * 用 ACTION 而非 INFO，是为了保留"可执行条目"的形态与位置；功能接入时把对应
  * 函数体填上即可，菜单结构不用再动。 */
@@ -323,16 +326,14 @@ static const menu_item_t menu_items_display[] = {
 MENU_PAGE_("Display", menu_page_display, menu_items_display);
 
 /* ==================== 休眠与唤醒页（Sleep & Wake，三级） ====================
- * Auto Sleep 从 Display 移到这里作为第一项（休眠本身属于唤醒策略）；
- * 其余项目前只有文本，功能待接入：
- *  - Pickup Wake / Motion Wake：抬手、运动唤醒（需要 SC7A20 中断参与，未实现）
- *  - Auto return Homepage：闲置自动回主界面（未实现）
- * 用 & 而非 "and"：terminus-u14b 与 montserrat_12 都含 U+0026，字宽更省。 */
+ * Pickup/Motion Wake 先接入二值RAM开关：任一开启时DeepSleep保留SC7A20 10Hz，
+ * 两者都关闭时SC7A20进入Power-down。具体阈值和INT使能后续再接。
+ * Auto return Homepage 仍为占位功能。 */
 static const menu_item_t menu_items_sleep_wake[] = {
     MENU_ITEM_BACK_("Return"),
     MENU_ITEM_ENUM_("Auto Sleep", &s_sleep_idx, s_sleep_opts, 9, sleep_apply),
-    MENU_ITEM_ACTION_("Pickup Wake", placeholder_apply),          /* TODO: 未实现 */
-    MENU_ITEM_ACTION_("Motion Wake", placeholder_apply),          /* TODO: 未实现 */
+    MENU_ITEM_TOGGLE_("Pickup Wake", &SC7A20_AlgoConfig.pickup_wake, "On", "Off", NULL),
+    MENU_ITEM_TOGGLE_("Motion Wake", &SC7A20_AlgoConfig.motion_wake, "On", "Off", NULL),
     MENU_ITEM_ACTION_("Auto return Homepage", placeholder_apply), /* TODO: 未实现 */
 };
 MENU_PAGE_("Sleep & Wake", menu_page_sleep_wake, menu_items_sleep_wake);

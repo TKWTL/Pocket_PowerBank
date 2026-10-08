@@ -375,3 +375,26 @@ uint8_t SW6306_AlgoDischargeSessionActive(void)
     return s_session.active;
 }
 /************************** SOH / 统计结果读取算法结束 **************************/
+
+/************************ SW6306 低功耗回调算法开始 ***************************/
+/* DeepSleep前让SW6306进入LP；按键或VBUS事件仍可经IRQ唤醒MCU。
+ * resume先Unlock；若器件状态已失效则重新Init，并通知算法层重新应用当前配置。 */
+void SW6306_AlgoPmSuspend(void *ctx)
+{
+    (void)ctx;
+    SW6306_LPSet();
+}
+
+void SW6306_AlgoPmResume(void *ctx)
+{
+    (void)ctx;
+
+    SW6306_Unlock();
+    if (SW6306_IsInitialized() == 0U) {
+        SW6306_Init();
+        if (SW6306_IsInitialized() != 0U) {
+            SW6306_AlgoOnDriverReinitialized();
+        }
+    }
+}
+/************************ SW6306 低功耗回调算法结束 ***************************/

@@ -29,7 +29,7 @@ char menu_status_bat[24] = "--.-V --.-A";
  *   根图标页 → About → Status(Battery/Accelerator/Timer) → Tools → Games
  *   → Settings(PowerBank/Display/Sleep & Wake/System)
  *   → PowerBank(Protocol#1/Protocol#2/PowerLimit)
- *   → Display → Sleep & Wake → System(Clock/Factory Option/Reset) → toggle/ENUM 取值
+ *   → Display → Sleep & Wake → System(Clock/Language/Factory Option/Reset) → toggle/ENUM 取值
  * 表内每一项都在菜单树或 menu_tr() 里有使用点；新增文案务必同步加条目，
  * 否则中文态会显示英文（menu_tr 的回退行为）。
  * 中文字库（14/12px 部分字符集）待全部文案确认后生成，生成前切中文缺字形。 */
@@ -75,12 +75,11 @@ static const menu_tr_t menu_tr_table[] = {
     /* ---- Tools 页 ---- */
     { "Screen Test",     "Screen Test",      "屏幕测试" },
     { "Coming Soon",     "Coming Soon",      "敬请期待" },
-    /* ---- Settings 页（四个子页 + Language 动作） ---- */
+    /* ---- Settings 页（四个子页） ---- */
     { "PowerBank",       "PowerBank",        "移动电源" },
     { "Display",         "Display",          "显示" },
     { "Sleep & Wake",    "Sleep & Wake",     "休眠与唤醒" },
     { "System",          "System",           "系统" },
-    { "Language",        "Language",         "语言" },
     /* Settings → PowerBank */
     { "Protocol#1",      "Protocol#1",       "协议#1" },
     { "Protocol#2",      "Protocol#2",       "协议#2" },
@@ -126,6 +125,7 @@ static const menu_tr_t menu_tr_table[] = {
     { "Clock",           "Clock",            "时钟" },
     /* Clock 子页的页面标题仍是 "Time"（菜单项标签改叫 Clock，页面标题未改） */
     { "Time",            "Time",             "时间" },
+    { "Language",        "Language",         "语言" },
     { "Factory Unlock",  "Factory Unlock",   "出厂解锁" },
     { "Factory Option",  "Factory Option",   "出厂选项" },
     { "Transport Mode",  "Transport Mode",   "运输模式" },
@@ -486,14 +486,13 @@ static const menu_item_t menu_items_reset[] = {
 MENU_PAGE_("Reset", menu_page_reset, menu_items_reset);
 
 /* ==================== 设置页（二级，四个子页） ====================
- * PowerBank / Display / Sleep & Wake / System。Language 单列为动作项（中英切换）。 */
+ * PowerBank / Display / Sleep & Wake / System（Language 在 System 里）。 */
 static const menu_item_t menu_items_settings[] = {
     MENU_ITEM_BACK_("Return"),
     MENU_ITEM_PAGE_("PowerBank",    &menu_page_powerbank),
     MENU_ITEM_PAGE_("Display",      &menu_page_display),
     MENU_ITEM_PAGE_("Sleep & Wake", &menu_page_sleep_wake),
     MENU_ITEM_PAGE_("System",       &menu_page_system),
-    MENU_ITEM_ACTION_("Language", lang_apply),   /* 单击即在中/英之间切换 */
 };
 MENU_PAGE_("Settings", menu_page_settings, menu_items_settings);
 
@@ -522,6 +521,7 @@ MENU_PAGE_("Factory Option", menu_page_factory_option, menu_items_factory_option
 static const menu_item_t menu_items_system[] = {
     MENU_ITEM_BACK_("Return"),
     MENU_ITEM_PAGE_("Clock",           &menu_page_time),
+    MENU_ITEM_ACTION_("Language",      lang_apply),          /* 单击即在中/英之间切换 */
     MENU_ITEM_ACTION_("Factory Unlock", placeholder_apply),  /* TODO: 未实现 */
     MENU_ITEM_PAGE_("Factory Option",  &menu_page_factory_option),
     MENU_ITEM_ACTION_("Transport Mode", placeholder_apply),  /* TODO: 未实现 */

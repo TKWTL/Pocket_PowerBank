@@ -221,16 +221,16 @@ static void fmt_item_text(const menu_item_t *it, bool editing, bool selected, ch
     }
 }
 
-/* ---------- 文本宽度限制（按"英文字符数"折像素） ----------
+/* ---------- 文本宽度限制（按"英文字符数"处理） ----------
  * 两种角色：
- *   - 中间当前项：14 个英文宽度内循环滚动（LV_LABEL_LONG_MODE_SCROLL_CIRCULAR）；
- *   - 角落/动画中的项：12 个英文宽度外截断加省略号（DOTS）。
- * 宽度按 font 的空格步进（等宽字体里等于字符宽）换算，所以"限制几个英文字符"
- * 与字号无关；中文换行/超宽时 clamp 到屏宽兜底，不会出现跑出屏幕的窗口。
- * 滚动只在文本真的超出时才启动，短文本的 box 就是文本自身宽度
- * （见 lv_label_refr_text 的 size.x > width 判断），不影响原有观感。 */
+ *   - 中间当前项：14 个英文宽度内不滚，超出循环滚动（SCROLL_CIRCULAR）；
+ *   - 角落/动画项：超过 12 个英文字符直接截断（DOTS），省略号由 LVGL 加。
+ * 为什么角落是"截断字符"而不是"压窄 box"：等宽字体里大写字母比空格宽，
+ * 把 box 压到 12 个空格宽时一行放不下——LVGL 会退化成**逐字符换行**，
+ * 于是 LABEL 变成一列竖排字。截断文本长度则始终只占一行，不会再出现竖排。
+ * 中间项用滚动，本来就不会换行。 */
 #define MENU_TEXT_SCROLL_CHARS   14U   /* 中间项：14 个英文宽度内不滚 */
-#define MENU_TEXT_CORNER_CHARS   12U   /* 角落/动画项：超过 12 个英文宽即截断 */
+#define MENU_TEXT_CORNER_CHARS   12U   /* 角落/动画项：超过 12 个英文字符即截断 */
 
 static int32_t menu_char_w(const lv_obj_t *lbl)
 {
@@ -245,10 +245,9 @@ static int32_t menu_char_w(const lv_obj_t *lbl)
     return (w > 0) ? w : 8;
 }
 
-/* 为 label 设定 box 宽度：
- *  - scroll=true：上限 14 个英文宽，超出部分循环滚动；
- *  - scroll=false：上限 12 个英文宽，超出部分截断加省略号（DOTS 模式）。
- * box 宽度同时不超过屏宽，避免窗口跑到屏幕外。 */
+/* 为 label 设定 box 宽度上限（不超过屏宽）：
+ *  - scroll=1：上限 14 个英文宽，超出由 SCROLL_CIRCULAR 滚动；
+ *  - scroll=0：上限 12 个英文宽，超出的字符已被截断，不会换行。 */
 static void label_fit_box(lv_obj_t *lbl, uint8_t scroll)
 {
     int32_t cw    = menu_char_w(lbl);
@@ -274,8 +273,7 @@ static void item_recenter(lv_obj_t *label)
 
 /* 右下角定位（手动计算）。不能用 lv_obj_align：align 会写入 LV_STYLE_ALIGN，
  * 布局刷新时 lv_obj_refr_pos() 会按对齐把对象拉回右下角，覆盖动画中的
- * lv_obj_set_x()，导致角落项滑不出屏幕而变成固定遮罩。
- * 角落项按 12 个英文宽截断，保证 box 不出屏幕。 */
+ * lv_obj_set_x()，导致角落项滑不出屏幕而变成固定遮罩。 */
 static void pos_next_corner(lv_obj_t *lbl)
 {
     label_fit_box(lbl, 0U);
@@ -283,20 +281,33 @@ static void pos_next_corner(lv_obj_t *lbl)
     lv_obj_set_pos(lbl, MENU_SCR_W - lv_obj_get_width(lbl) - MENU_CORNER_X, MENU_ROW_BOT_Y);
 }
 
-/* 左上角定位：同样先限宽（12 英文宽截断）再复位到 (1,-1)。
- * 统一走这个函数，避免各处直接 lv_obj_set_pos 时漏掉限宽 —— 角落 label 的
- * DOTS 截断只在 box 宽度受限时才生效，漏一次就会画出屏幕。 */
+/* 左上角定位：同样先限宽再复位到 (1,-1)。
+ * 统一走这个函数，避免各处直接 lv_obj_set_pos 时漏掉限宽。 */
 static void pos_prev_corner(lv_obj_t *lbl)
 {
     label_fit_box(lbl, 0U);
     lv_obj_set_pos(lbl, MENU_CORNER_X, MENU_ROW_TOP_Y);
 }
 
-/* 角落文本更新：写文本 + 限宽 + 定位，一次做完（文本与宽度必须同源，
- * 否则 box 会留着上一个条目的宽度）。 */
+/* 角落文本：先按英文字符数截断，再写文本 + 限宽。
+ * 文本与宽度必须同源写入，否则 box 会留着上一个条目的宽度。 */
 static void corner_set_text(lv_obj_t *lbl, const char *text)
 {
-    lv_label_set_text(lbl, text);
+    char cut[MENU_TEXT_CORNER_CHARS + 1U];
+    size_t n;
+
+    if (text == NULL) {
+        text = "";
+    }
+    /* 截到 12 个字符（按字节数——英文文案都是 ASCII，一个字节一个字符） */
+    n = strlen(text);
+    if (n > (size_t)MENU_TEXT_CORNER_CHARS) {
+        n = (size_t)MENU_TEXT_CORNER_CHARS;
+    }
+    memcpy(cut, text, n);
+    cut[n] = '\0';
+
+    lv_label_set_text(lbl, cut);
     label_fit_box(lbl, 0U);
 }
 

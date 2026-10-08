@@ -233,6 +233,21 @@ static void fmt_item_text(const menu_item_t *it, bool editing, bool selected, ch
 #define MENU_TEXT_CORNER_CHARS   12U
 #define MENU_TEXT_CENTER_CHARS   14U
 
+/* 中心项循环滚动的速度：取 LVGL 默认速度的一半（默认见 lv_label.c 的
+ * LV_LABEL_DEF_SCROLL_SPEED = lv_anim_speed_clamped(40, 300, 10000)）。
+ * 两点必须注意：
+ *  1) 不能直接给一个 ms 数。anim_duration 既可能是"固定时长"也可能是"速度编码"，
+ *     靠 LV_ANIM_SPEED_MASK 区分：lv_anim_resolve_speed() 里带 mask 才按
+ *     距离/速度 换算时长，不带 mask 会被当成固定时长。所以必须用
+ *     lv_anim_speed_clamped() 生成编码值。
+ *  2) 传送给 lv_anim_speed_clamped 的数值是"速度单位"，不是 px/s ——
+ *     LVGL 内部按 10 分辨率存储，解码时 time(ms) = 距离*100/speed_stored，
+ *     所以 speed=40 实际约 400px/s（实测 22 字符约 3.4s 走完一轮，与之吻合）。
+ *     要让滚动时间翻倍（速度减半），把 40 改成 20 即可。
+ * min/max 沿用默认：300ms 下限、10s 上限（上限本身被 LVGL 限制在 10000ms）。 */
+#define MENU_SCROLL_SPEED_UNITS  20U
+#define MENU_SCROLL_ANIM_TIME    lv_anim_speed_clamped(MENU_SCROLL_SPEED_UNITS, 300U, 10000U)
+
 static int32_t menu_ascii_char_w(const lv_obj_t *lbl)
 {
     const lv_font_t *f = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
@@ -273,6 +288,8 @@ static void center_set_text(lv_obj_t *lbl, const char *text, uint8_t editing)
     } else {
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
         lv_obj_set_width(lbl, menu_fixed_text_w(lbl, MENU_TEXT_CENTER_CHARS));
+        /* 只给滚动角色设速度；编辑态是 CLIP，不滚，设了也无影响 */
+        lv_obj_set_style_anim_duration(lbl, MENU_SCROLL_ANIM_TIME, 0);
     }
     lv_label_set_text(lbl, text ? text : "");
 }

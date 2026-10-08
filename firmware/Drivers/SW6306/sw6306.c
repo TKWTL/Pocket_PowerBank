@@ -574,21 +574,30 @@ sw6306_learn_state_t SW6306_ReadLearnState(void)//读取容量学习状态（0xA
                                   ((raw & SW6306_LEARN_ING) ? 1U : 0U));
 }
 
-/* 容量学习使能/失能：enable=1 使能 0x14E[4] LEARNEN + 清 0xA2[5] 历史完成标志（重新武装）；
- * enable=0 关闭 LEARNEN。
- * 注意：SW6306 实际学习在「触发 UVLO 后再次开始充电」时启动，使能不保证立即开始。 */
+/* 只控制容量学习总使能，不再顺带清 LEARN_END。
+ * 这样系统每次启动/重初始化都可以安全地“确保常开”，而不会破坏尚未被算法层消费的完成状态。 */
 SW6306_RET SW6306_CapacityLearningSet(SW6306_ARGS(uint8_t enable))
 {
     SW6306_FUNC_BEGIN;
     SW6306_MUTEX_TAKE;
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_GAUGE0);
-    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_GAUGE0, SW6306_GAUGE0_LEARNEN, enable ? SW6306_GAUGE0_LEARNEN : 0x00);
-    if(enable)
-    {
-        /* 使能时清历史完成标志，重新武装学习 */
-        SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_LEARN);
-        SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_STRG_LEARN, SW6306_LEARN_END, 0x00);
-    }
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_GAUGE0, SW6306_GAUGE0_LEARNEN,
+                      enable ? SW6306_GAUGE0_LEARNEN : 0x00);
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
+}
+
+/* 重新武装下一次容量学习：学习功能保持开启，仅清除历史完成标志。
+ * 学习不会因此立即开始；仍需后续完整经历 UVLO -> 再充电。 */
+SW6306_RET SW6306_CapacityLearningRearm(SW6306_NOARG)
+{
+    SW6306_FUNC_BEGIN;
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_GAUGE0);
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_GAUGE0, SW6306_GAUGE0_LEARNEN,
+                      SW6306_GAUGE0_LEARNEN);
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_LEARN);
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_STRG_LEARN, SW6306_LEARN_END, 0x00);
     SW6306_MUTEX_GIVE;
     SW6306_FUNC_END;
 }

@@ -122,7 +122,6 @@ static const menu_tr_t menu_tr_table[] = {
     { "Output",          "Output",           "输出功率" },
     { "Input",           "Input",            "输入功率" },
     /* PowerBank → Battery */
-    { "Learn Waiting",   "Learn Waiting",    "容量学习" },
     { "Record SOH",      "Record SOH",       "记录SOH" },
     /* PowerBank → SW6306 */
     { "Init Now",        "Init Now",         "立即初始化" },
@@ -419,13 +418,8 @@ static const menu_item_t menu_items_powerlimit[] = {
 };
 MENU_PAGE_("PowerLimit", menu_page_powerlimit, menu_items_powerlimit);
 
-/* ==================== PowerBank → Battery 子页（容量学习 / 健康度参考） ==================== */
-static void learn_apply(menu_item_t *it)
-{
-    (void)it;
-    SW6306_AlgoRequestCapacityLearning();
-}
-
+/* ==================== PowerBank → Battery 子页（SOH 出厂基准） ====================
+ * 容量学习由 sw6306_algo 固定常开并自动重新武装，不再提供用户开关。 */
 static void record_soh_apply(menu_item_t *it)
 {
     (void)it;
@@ -434,14 +428,13 @@ static void record_soh_apply(menu_item_t *it)
 
 static const menu_item_t menu_items_battery_set[] = {
     MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_TOGGLE_("Learn Waiting", &SW6306_AlgoConfig.learn_enable, "On", "Off", learn_apply),
-    MENU_ITEM_ACTION_("Record SOH",    record_soh_apply),
+    MENU_ITEM_ACTION_("Record SOH", record_soh_apply),
 };
 MENU_PAGE_("Battery", menu_page_battery_set, menu_items_battery_set);
 
 /* ==================== PowerBank → SW6306 子页（手动重新初始化） ====================
  * 菜单只发 RAM request；SW6306_task 负责失效 session、重初始化硬件，
- * 成功后 sw6306_algo 会重新应用当前协议/功率/容量学习配置。 */
+ * 成功后 sw6306_algo 会重新应用当前协议/功率，并确保容量学习保持常开。 */
 static void sw6306_reinit_apply(menu_item_t *it)
 {
     (void)it;

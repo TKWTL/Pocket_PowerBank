@@ -55,6 +55,10 @@ static wled_port_cmd_t s_port_cmd;
 static volatile uint8_t s_toggle_request;
 static volatile int16_t s_step_request;
 
+/*** WLED 亮度映射与温控保护算法开始 ***/
+/* 用户亮度档位 4~25 先做平方映射 PWM=level²，使低亮度端分辨率更细；
+ * 实际输出档位再受 NTC 铝壳温度查表限制。NTC>=60°C立即锁存关灯，
+ * 降至45°C才允许重新手动开启；SW6306电量为0时同样立即保护关灯。 */
 static uint16_t wled_level_to_pwm(uint16_t level)
 {
     uint32_t pwm = (uint32_t)level * (uint32_t)level;
@@ -174,6 +178,11 @@ static void wled_set_brightness(uint16_t level)
     (void)wled_update_output();
 }
 
+/*** WLED 亮度映射与温控保护算法结束 ***/
+
+/*** WLED UI请求合并算法开始 ***/
+/* UI线程只累计 Toggle / BrightnessStep RAM 请求；10ms算法节拍统一消费，
+ * 避免界面直接改PWM、温控状态或SW6306端口。 */
 static void wled_take_ui_requests(void)
 {
     uint8_t toggle;
@@ -203,6 +212,12 @@ static void wled_take_ui_requests(void)
     }
 }
 
+/*** WLED UI请求合并算法结束 ***/
+
+/*** WLED 平滑亮度变化算法开始 ***/
+/* 每次目标PWM变化时以“当前PWM”为新起点，在16个10ms tick内线性走到目标；
+ * 渐变过程中再次调光也从当时PWM重新起算，因此连续无跳变。
+ * 显式关灯与保护关断不渐变，直接归零。 */
 static void wled_pwm_ramp(void)
 {
     uint16_t want;
@@ -229,6 +244,13 @@ static void wled_pwm_ramp(void)
     }
 }
 
+/*** WLED 平滑亮度变化算法结束 ***/
+
+/*** WLED 库仑计假A1计量算法开始 ***/
+/* WLED由独立Boost供电；当没有真实C1/充电通路时，SW6306可能不进入正常放电计量。
+ * 因此算法请求“假插入A1”让SW6306保持计量通路，并显式记录ownership：
+ * 只有本算法创建并确认的A1才允许主动移除。真实C1或充电通路接管时延迟1s让位；
+ * 关灯PWM归零后再保留200ms再拔假A1。算法本身不发I2C，只产生端口命令。 */
 static void wled_request_port(wled_port_cmd_t cmd)
 {
     if (s_port_cmd == WLED_PORT_CMD_NONE) s_port_cmd = cmd;
@@ -316,6 +338,11 @@ static void wled_meter_path_tick(void)
     }
 }
 
+/*** WLED 库仑计假A1计量算法结束 ***/
+
+/*** WLED 算法调度与状态接口开始 ***/
+/* load_task以10ms推进快速算法、500ms推进低频兜底保护；
+ * PWM与A1端口命令均由load_task取出后执行，读接口只返回RAM状态。 */
 void WLED_AlgoInit(void)
 {
     s_level = 0U;
@@ -441,3 +468,4 @@ uint8_t WLED_AlgoOwnsFakeA1(void)
 {
     return s_fake_a1_owned;
 }
+/*** WLED 算法调度与状态接口结束 ***/

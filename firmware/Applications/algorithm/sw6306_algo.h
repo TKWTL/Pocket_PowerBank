@@ -33,7 +33,6 @@ typedef struct {
 
     int32_t output_power_w;
     int32_t input_power_w;
-    uint8_t learn_enable;
 } sw6306_algo_config_t;
 
 extern sw6306_algo_config_t SW6306_AlgoConfig;
@@ -51,7 +50,6 @@ void SW6306_AlgoRequestProtocolApply(void);
 void SW6306_AlgoRequestPPSBroadcast(void);
 void SW6306_AlgoRequestUFCSBroadcast(void);
 void SW6306_AlgoRequestPowerApply(void);
-void SW6306_AlgoRequestCapacityLearning(void);
 void SW6306_AlgoRequestRecordFactoryCapacity(void);
 void SW6306_AlgoRequestReinit(void);
 

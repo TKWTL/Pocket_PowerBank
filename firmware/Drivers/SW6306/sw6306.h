@@ -1409,9 +1409,12 @@ typedef enum {
     SW6306_LEARN_ST_UNKNOWN = 3,
 } sw6306_learn_state_t;
 sw6306_learn_state_t SW6306_ReadLearnState(void);   //读取容量学习状态（0xA2 镜像，3 态 + Unknown）
-/* 容量学习武装：使能 0x14E[4] LEARNEN + 写 0xA2[5]=0 清历史完成标志。
- * 注意：SW6306 实际学习在「触发 UVLO 后再次开始充电」时启动，本函数只重新武装状态，不保证立即开始。 */
-SW6306_RET SW6306_CapacityLearningSet(SW6306_ARGS(uint8_t enable)); //容量学习使能/失能（1=武装使能+清历史标志，0=关闭）
+/* 容量学习控制拆成两步，避免“开机确保使能”误清历史完成标志：
+ *  - Set(enable)：只控制 0x14E[4] LEARNEN，不修改 0xA2[5] LEARN_END；
+ *  - Rearm()：保持 LEARNEN=1，并清 LEARN_END，武装下一次完整学习。
+ * 实际学习仍需先触发 UVLO，随后再次开始充电才会启动。 */
+SW6306_RET SW6306_CapacityLearningSet(SW6306_ARGS(uint8_t enable));
+SW6306_RET SW6306_CapacityLearningRearm(SW6306_NOARG);
 //状态操作
 SW6306_RET SW6306_ForceOff(SW6306_NOARG);     //强制关闭放电并休眠
 SW6306_RET SW6306_Unlock(SW6306_NOARG);       //解除低功耗，解锁SW6306的寄存器写入

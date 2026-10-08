@@ -70,6 +70,8 @@ static const menu_tr_t menu_tr_table[] = {
     { "status.date",     "20%02d-%02d-%02d", "20%02d-%02d-%02d" },
     { "status.temp",     "Temp: %d°C",       "温度: %d°C" },
     { "status.vbackup",  "Vbackup: %.2fV",   "备用电池: %.2fV" },
+    { "status.uid",      "ID:0x%02X%02X%02X%02X%02X%02X%02X%02X",
+                         "ID:0x%02X%02X%02X%02X%02X%02X%02X%02X" },
     /* ---- Tools 页 ---- */
     { "Screen Test",     "Screen Test",      "屏幕测试" },
     { "Coming Soon",     "Coming Soon",      "敬请期待" },
@@ -214,9 +216,9 @@ static uint8_t s_theme_toggle = 0;          /* 0=深色 1=浅色 */
 static int32_t s_theme_color_idx = 0;       /* 主题色在色板中的下标 */
 static int32_t s_backlight = 8;             /* 背光亮度 1~16，默认 8 */
 static int32_t s_sleep_idx = 4;             /* 自动休眠：ENUM 选项下标（默认 30s），0=不休眠 */
-/* 自动翻转开关：ON=按重力方向自动 180° 翻转（默认）；OFF=固定方向（画面永远正立）。
+/* 自动翻转开关：ON=按重力方向自动 180° 翻转；OFF=固定方向（画面永远正立，默认）。
  * 与背光一样是运行时设置，未持久化。 */
-static uint8_t s_auto_flip = 1;
+static uint8_t s_auto_flip = 0;
 
 /* 占位动作：用于"界面先立起来、功能待接入"的条目（Sleep & Wake / System 里若干项）。
  * 用 ACTION 而非 INFO，是为了保留"可执行条目"的形态与位置；功能接入时把对应
@@ -539,7 +541,7 @@ static char menu_status_time[16];        /* 时分秒 */
 static char menu_status_date[16];        /* 年月日 */
 static char menu_status_temp[16];        /* 温度 */
 static char menu_status_vbackup[20];     /* 备用电池电压（Vbackup） */
-static char menu_status_uid[20];         /* SD3078 UID（16 位十六进制字符，无前缀后缀） */
+static char menu_status_uid[24];         /* SD3078 UID，显示为 "ID:0x" + 16 个十六进制字符 */
 
 static const menu_item_t menu_items_status_battery[] = {
     MENU_ITEM_BACK_("Return"),
@@ -647,7 +649,9 @@ void menu_status_refresh(void)
                  (int)SD3078_ReadTemp());
         snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), menu_tr("status.vbackup"),
                  SD3078_ReadBatt() / 1000.0f);
-        snprintf(menu_status_uid, sizeof(menu_status_uid), "%02X%02X%02X%02X%02X%02X%02X%02X",
+        /* UID：0x72~0x79 共 8 字节 → "ID:0x" + 16 个十六进制字符。
+         * 格式串放在 i18n 表（status.uid），中英一致。 */
+        snprintf(menu_status_uid, sizeof(menu_status_uid), menu_tr("status.uid"),
                  SD3078_ReadID(0), SD3078_ReadID(1), SD3078_ReadID(2), SD3078_ReadID(3),
                  SD3078_ReadID(4), SD3078_ReadID(5), SD3078_ReadID(6), SD3078_ReadID(7));
     } else {
@@ -655,7 +659,7 @@ void menu_status_refresh(void)
         snprintf(menu_status_date, sizeof(menu_status_date), "----");
         snprintf(menu_status_temp, sizeof(menu_status_temp), "Temp: --");
         snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), "Vbackup: --");
-        snprintf(menu_status_uid, sizeof(menu_status_uid), "----------------");
+        snprintf(menu_status_uid, sizeof(menu_status_uid), "ID:0x----------------");
     }
 }
 

@@ -221,20 +221,83 @@ static void fmt_item_text(const menu_item_t *it, bool editing, bool selected, ch
     }
 }
 
+/* ---------- 文本宽度限制（按"英文字符数"折像素） ----------
+ * 两种角色：
+ *   - 中间当前项：14 个英文宽度内循环滚动（LV_LABEL_LONG_MODE_SCROLL_CIRCULAR）；
+ *   - 角落/动画中的项：12 个英文宽度外截断加省略号（DOTS）。
+ * 宽度按 font 的空格步进（等宽字体里等于字符宽）换算，所以"限制几个英文字符"
+ * 与字号无关；中文换行/超宽时 clamp 到屏宽兜底，不会出现跑出屏幕的窗口。
+ * 滚动只在文本真的超出时才启动，短文本的 box 就是文本自身宽度
+ * （见 lv_label_refr_text 的 size.x > width 判断），不影响原有观感。 */
+#define MENU_TEXT_SCROLL_CHARS   14U   /* 中间项：14 个英文宽度内不滚 */
+#define MENU_TEXT_CORNER_CHARS   12U   /* 角落/动画项：超过 12 个英文宽即截断 */
+
+static int32_t menu_char_w(const lv_obj_t *lbl)
+{
+    const lv_font_t *f = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+    int32_t w;
+
+    if (f == NULL || f->line_height <= 0) {
+        return 8;   /* 兜底：按 8px 字宽估算 */
+    }
+    /* 空格步进 = 字符宽（等宽字体） */
+    w = lv_font_get_glyph_width(f, ' ', ' ');
+    return (w > 0) ? w : 8;
+}
+
+/* 为 label 设定 box 宽度：
+ *  - scroll=true：上限 14 个英文宽，超出部分循环滚动；
+ *  - scroll=false：上限 12 个英文宽，超出部分截断加省略号（DOTS 模式）。
+ * box 宽度同时不超过屏宽，避免窗口跑到屏幕外。 */
+static void label_fit_box(lv_obj_t *lbl, uint8_t scroll)
+{
+    int32_t cw    = menu_char_w(lbl);
+    int32_t cap   = (scroll != 0U) ? (int32_t)MENU_TEXT_SCROLL_CHARS * cw
+                                   : (int32_t)MENU_TEXT_CORNER_CHARS * cw;
+    int32_t want  = lv_obj_get_self_width(lbl);
+    int32_t limit = (want < cap) ? want : cap;
+
+    if (limit > MENU_SCR_W) limit = MENU_SCR_W;
+    if (limit < 1) limit = 1;
+    if (lv_obj_get_width(lbl) != limit) {
+        lv_obj_set_width(lbl, limit);
+    }
+}
+
 /* 把 label 水平居中（手动定位，不依赖对齐） */
 static void item_recenter(lv_obj_t *label)
 {
+    label_fit_box(label, 1U);   /* 中间项：限宽 + 超出循环滚动 */
     lv_obj_update_layout(label);
     lv_obj_set_x(label, (MENU_SCR_W - lv_obj_get_width(label)) / 2);
 }
 
 /* 右下角定位（手动计算）。不能用 lv_obj_align：align 会写入 LV_STYLE_ALIGN，
  * 布局刷新时 lv_obj_refr_pos() 会按对齐把对象拉回右下角，覆盖动画中的
- * lv_obj_set_x()，导致角落项滑不出屏幕而变成固定遮罩。 */
+ * lv_obj_set_x()，导致角落项滑不出屏幕而变成固定遮罩。
+ * 角落项按 12 个英文宽截断，保证 box 不出屏幕。 */
 static void pos_next_corner(lv_obj_t *lbl)
 {
+    label_fit_box(lbl, 0U);
     lv_obj_update_layout(lbl);
     lv_obj_set_pos(lbl, MENU_SCR_W - lv_obj_get_width(lbl) - MENU_CORNER_X, MENU_ROW_BOT_Y);
+}
+
+/* 左上角定位：同样先限宽（12 英文宽截断）再复位到 (1,-1)。
+ * 统一走这个函数，避免各处直接 lv_obj_set_pos 时漏掉限宽 —— 角落 label 的
+ * DOTS 截断只在 box 宽度受限时才生效，漏一次就会画出屏幕。 */
+static void pos_prev_corner(lv_obj_t *lbl)
+{
+    label_fit_box(lbl, 0U);
+    lv_obj_set_pos(lbl, MENU_CORNER_X, MENU_ROW_TOP_Y);
+}
+
+/* 角落文本更新：写文本 + 限宽 + 定位，一次做完（文本与宽度必须同源，
+ * 否则 box 会留着上一个条目的宽度）。 */
+static void corner_set_text(lv_obj_t *lbl, const char *text)
+{
+    lv_label_set_text(lbl, text);
+    label_fit_box(lbl, 0U);
 }
 
 /* ---------- 条目配色（必须定义在所有使用它的函数之前） ----------
@@ -291,17 +354,17 @@ static void refresh_prev_next(const menu_page_t *pg, uint8_t index)
     if (n > 1) {
         it = page_item(pg, (uint8_t)((index + n - 1) % n));
         fmt_item_text(it, false, false, buf, sizeof(buf));
-        lv_label_set_text(s_item_prev, buf);
+        corner_set_text(s_item_prev, buf);
         color_unselected(s_item_prev, it);
-        lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);   /* 复位左上角（出屏动画后可能停在屏外，否则恢复显示也看不见） */
+        pos_prev_corner(s_item_prev);   /* 复位左上角（出屏动画后可能停在屏外，否则恢复显示也看不见） */
         it = page_item(pg, (uint8_t)((index + 1) % n));
         fmt_item_text(it, false, false, buf, sizeof(buf));
-        lv_label_set_text(s_item_next, buf);
+        corner_set_text(s_item_next, buf);
         color_unselected(s_item_next, it);
         pos_next_corner(s_item_next);   /* 文本变化后手动重定位右下角 */
     } else {
-        lv_label_set_text(s_item_prev, "");
-        lv_label_set_text(s_item_next, "");
+        corner_set_text(s_item_prev, "");
+        corner_set_text(s_item_next, "");
     }
 }
 
@@ -376,17 +439,17 @@ static void snap_static(const menu_page_t *pg, uint8_t index)
             const menu_item_t *itp = page_item(pg, (uint8_t)((index + n - 1U) % n));
             const menu_item_t *itn = page_item(pg, (uint8_t)((index + 1U) % n));
             fmt_item_text(itp, false, false, buf, sizeof(buf));
-            lv_label_set_text(s_item_prev, buf);
+            corner_set_text(s_item_prev, buf);
             color_unselected(s_item_prev, itp);
-            lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);
+            pos_prev_corner(s_item_prev);
             fmt_item_text(itn, false, false, buf, sizeof(buf));
-            lv_label_set_text(s_item_next, buf);
+            corner_set_text(s_item_next, buf);
             color_unselected(s_item_next, itn);
             pos_next_corner(s_item_next);
         } else {
             /* 单条目页：两个角落清空，避免残留上一页文本 */
-            lv_label_set_text(s_item_prev, "");
-            lv_label_set_text(s_item_next, "");
+            corner_set_text(s_item_prev, "");
+            corner_set_text(s_item_next, "");
         }
     }
 
@@ -450,8 +513,8 @@ static void slide_start(int8_t dir)
         /* s_item_prev：重设为旧上一项（refresh 已改为新值），向左滑出屏幕。
          * 先把对象位置与 PID 起点显式对齐（不依赖 set_text 前的旧位置）。 */
         fmt_item_text(&pg->items[(prev + n - 1) % n], false, false, buf, sizeof(buf));
-        lv_label_set_text(s_item_prev, buf);
-        lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);
+        corner_set_text(s_item_prev, buf);
+        pos_prev_corner(s_item_prev);
         pid_init(&s_prev_out_x, (float)MENU_CORNER_X, (float)(-MENU_SCR_W));   /* 水平向左出屏 */
         /* s_item_next：隐藏，由 s_item_next_in（下下一项）自屏外右滑入右下角。
          * 滑入项文本直接从索引计算（items[index+1]），不依赖角落标签当前文本：
@@ -459,7 +522,7 @@ static void slide_start(int8_t dir)
          * 相同文字重叠，且后续每次切换都沿用错误文本。 */
         lv_obj_add_flag(s_item_next, LV_OBJ_FLAG_HIDDEN);
         fmt_item_text(&pg->items[(st->index + 1) % n], false, false, buf, sizeof(buf));
-        lv_label_set_text(s_item_next_in, buf);
+        corner_set_text(s_item_next_in, buf);
         lv_obj_remove_flag(s_item_next_in, LV_OBJ_FLAG_HIDDEN);
         lv_obj_update_layout(s_item_next_in);
         nw = lv_obj_get_width(s_item_next_in);
@@ -475,7 +538,7 @@ static void slide_start(int8_t dir)
         /* s_item_next：重设为旧下一项，向右滑出屏幕（起点手动计算并显式定位，
          * 避免 set_text 后 align/旧文本位置残留导致起点错误/滑出失效） */
         fmt_item_text(&pg->items[(prev + 1) % n], false, false, buf, sizeof(buf));
-        lv_label_set_text(s_item_next, buf);
+        corner_set_text(s_item_next, buf);
         lv_obj_update_layout(s_item_next);
         lv_obj_set_pos(s_item_next,
                        (MENU_SCR_W - lv_obj_get_width(s_item_next) - MENU_CORNER_X),
@@ -488,7 +551,7 @@ static void slide_start(int8_t dir)
          * （原因同上：中断路径下角落文本可能是"按键前"旧值=新当前项）。 */
         lv_obj_add_flag(s_item_prev, LV_OBJ_FLAG_HIDDEN);
         fmt_item_text(&pg->items[(st->index + n - 1) % n], false, false, buf, sizeof(buf));
-        lv_label_set_text(s_item_prev_in, buf);
+        corner_set_text(s_item_prev_in, buf);
         lv_obj_remove_flag(s_item_prev_in, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_pos(s_item_prev_in, -MENU_SCR_W, MENU_ROW_TOP_Y);
         pid_init(&s_prev_in_x, (float)(-MENU_SCR_W), (float)MENU_CORNER_X);
@@ -563,7 +626,7 @@ static void slide_commit_next(const menu_page_t *pg, uint8_t index)
         item_recenter(s_item);
         it = page_item(pg, (uint8_t)((index + 1) % n));
         fmt_item_text(it, false, false, buf, sizeof(buf));
-        lv_label_set_text(s_item_next, buf);
+        corner_set_text(s_item_next, buf);
         color_unselected(s_item_next, it);
         pos_next_corner(s_item_next);
         /* 左上角这个对象在 NEXT 里刚由旧中间项滑来，文本已是本轮的上一项，
@@ -614,9 +677,9 @@ static void slide_commit_prev(const menu_page_t *pg, uint8_t index)
         item_recenter(s_item);
         it = page_item(pg, (uint8_t)((index + n - 1) % n));
         fmt_item_text(it, false, false, buf, sizeof(buf));
-        lv_label_set_text(s_item_prev, buf);
+        corner_set_text(s_item_prev, buf);
         color_unselected(s_item_prev, it);
-        lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);
+        pos_prev_corner(s_item_prev);
         /* 右下角这个对象在 PREV 里刚由旧中间项滑来，颜色与文本一并补齐 */
         it = page_item(pg, (uint8_t)((index + 1) % n));
         color_unselected(s_item_next, it);
@@ -826,6 +889,7 @@ static void icon_redraw(const menu_state_t *st, const menu_page_t *pg)
     {
         const menu_icon_t *mi = &pg->icons[st->index];
         lv_label_set_text(s_icon_hint, (mi && mi->label) ? menu_tr(mi->label) : "");
+        label_fit_box(s_icon_hint, 0U);   /* 图标名过长按 12 英文宽截断（顶部文字条） */
     }
 
     /* 刚进入图标页（打开菜单/页面切换）：head_x 定位到保存值，图标直接到位 */
@@ -1003,32 +1067,41 @@ lv_obj_t *menu_ui_create(void)
 
     s_item_prev = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_prev, MENU_CORNER_X, MENU_ROW_TOP_Y);      /* 左上：上一项（灰） */
-    lv_label_set_text(s_item_prev, "");
+    lv_label_set_long_mode(s_item_prev, LV_LABEL_LONG_MODE_DOTS);    /* 角落：超 12 英文宽截断 */
+    corner_set_text(s_item_prev, "");
 
     s_item_next = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_next, MENU_SCR_W, MENU_ROW_BOT_Y);    /* 右下：下一项（灰，redraw 时正确定位） */
-    lv_label_set_text(s_item_next, "");
+    lv_label_set_long_mode(s_item_next, LV_LABEL_LONG_MODE_DOTS);
+    corner_set_text(s_item_next, "");
 
-    /* 角落滑入标签：动画期间从屏外滑入（下下一项/上上一项），与角落同层 */
+    /* 角落滑入标签：动画期间从屏外滑入（下下一项/上上一项），与角落同层。
+     * 这里就先按 12 英文宽限好 box，滑入过程中与静止态宽度一致。 */
     s_item_next_in = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_next_in, MENU_SCR_W, MENU_ROW_BOT_Y);
-    lv_label_set_text(s_item_next_in, "");
+    lv_label_set_long_mode(s_item_next_in, LV_LABEL_LONG_MODE_DOTS);
+    corner_set_text(s_item_next_in, "");
     lv_obj_add_flag(s_item_next_in, LV_OBJ_FLAG_HIDDEN);
 
     s_item_prev_in = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_prev_in, -MENU_SCR_W, MENU_ROW_TOP_Y);
-    lv_label_set_text(s_item_prev_in, "");
+    lv_label_set_long_mode(s_item_prev_in, LV_LABEL_LONG_MODE_DOTS);
+    corner_set_text(s_item_prev_in, "");
     lv_obj_add_flag(s_item_prev_in, LV_OBJ_FLAG_HIDDEN);
 
     /* 中间项：后创建 = 顶层。动画中滑向角落的中间项始终盖住同角落
      * 滑出的旧角落项 → 交汇处无重影/重叠（若角落在上层，PREV 时中间项
-     * 滑到右下会被滑出的旧下一项盖住，形成双重影）。 */
+     * 滑到右下会被滑出的旧下一项盖住，形成双重影）。
+     * 中间项用 SCROLL_CIRCULAR：超过 14 个英文宽时循环滚动（滚动条已由
+     * 主题样式关闭，见 apply_theme）。 */
     s_item = lv_label_create(s_scr);
     lv_obj_set_pos(s_item, 0, MENU_ROW_MID_Y);                    /* 中间：当前项（x/y 由动画/居中控制） */
+    lv_label_set_long_mode(s_item, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_label_set_text(s_item, "");
 
     s_item_in = lv_label_create(s_scr);
     lv_obj_set_pos(s_item_in, 0, MENU_ROW_MID_Y);
+    lv_label_set_long_mode(s_item_in, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_label_set_text(s_item_in, "");
     lv_obj_add_flag(s_item_in, LV_OBJ_FLAG_HIDDEN);
 
@@ -1036,6 +1109,7 @@ lv_obj_t *menu_ui_create(void)
     s_icon_hint = lv_label_create(s_scr);
     lv_obj_set_pos(s_icon_hint, 3, ICON_TOP_Y);
     lv_obj_set_style_text_font(s_icon_hint, &lv_font_montserrat_12, 0);
+    lv_label_set_long_mode(s_icon_hint, LV_LABEL_LONG_MODE_DOTS);
     lv_label_set_text(s_icon_hint, "");
     lv_obj_add_flag(s_icon_hint, LV_OBJ_FLAG_HIDDEN);
 

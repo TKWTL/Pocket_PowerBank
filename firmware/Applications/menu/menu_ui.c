@@ -243,13 +243,16 @@ static int32_t menu_char_w(const lv_obj_t *lbl)
     return (w > 0) ? w : 8;
 }
 
-/* 中间项：box 上限 = 14 个字符宽（不超屏），超出交给 SCROLL_CIRCULAR 滚动 */
+/* 中间项：box 上限 = 14 个字符宽（不超屏），超出交给 SCROLL_CIRCULAR 滚动。
+ * +2px 余量：文本宽度正好等于上限时（如 "Sleep & Wake >" = 14 字符 = 112px），
+ * 若实测多出 1px，box 就会比文字窄而被 LVGL 判成溢出、走 DOTS 截断成
+ * "Sleep..."。宁可 box 宽 2px，也不要卡在边界上被裁。 */
 static void label_fit_box(lv_obj_t *lbl, uint8_t scroll)
 {
-    int32_t cap   = (scroll != 0U) ? (int32_t)MENU_TEXT_SCROLL_CHARS * menu_char_w(lbl)
+    int32_t cap   = (scroll != 0U) ? ((int32_t)MENU_TEXT_SCROLL_CHARS * menu_char_w(lbl) + 2)
                                    : MENU_SCR_W;
     int32_t want  = lv_obj_get_self_width(lbl);
-    int32_t limit = (want < cap) ? want : cap;
+    int32_t limit = (want < cap) ? (want + 2) : cap;
 
     if (limit > MENU_SCR_W) limit = MENU_SCR_W;
     if (limit < 1) limit = 1;
@@ -654,9 +657,14 @@ static void slide_commit_next(const menu_page_t *pg, uint8_t index)
         corner_set_text(s_item_next, buf);
         color_unselected(s_item_next, it);
         pos_next_corner(s_item_next);
-        /* 左上角这个对象在 NEXT 里刚由旧中间项滑来，文本已是本轮的上一项，
-         * 颜色在这里一并补齐（与文本同源），不依赖下一帧 apply_theme。 */
+        /* 左上角这个对象在 NEXT 里刚由旧中间项滑来（原来是"中间"角色，box 按
+         * 中间的上限算），降级成角落必须重算文本与宽度，否则它会顶着中间那套
+         * 宽度、内容也还是旧的完整格式。角色换了就要重新 fit —— 之前只在
+         * set_text 处 fit，交接后的新角色漏掉了，于是角落项升到中间时还带着
+         * 角落的窄 box，被 LVGL 的 DOTS 截成 "Sleep..."。 */
         it = page_item(pg, (uint8_t)((index + n - 1) % n));
+        fmt_item_text(it, false, false, buf, sizeof(buf));
+        corner_set_text(s_item_prev, buf);
         color_unselected(s_item_prev, it);
     }
 
@@ -705,8 +713,11 @@ static void slide_commit_prev(const menu_page_t *pg, uint8_t index)
         corner_set_text(s_item_prev, buf);
         color_unselected(s_item_prev, it);
         pos_prev_corner(s_item_prev);
-        /* 右下角这个对象在 PREV 里刚由旧中间项滑来，颜色与文本一并补齐 */
+        /* 右下角这个对象在 PREV 里刚由旧中间项滑来（原"中间"角色），降级成角落
+         * 同样要重算文本与宽度（见 NEXT 处的说明）。 */
         it = page_item(pg, (uint8_t)((index + 1) % n));
+        fmt_item_text(it, false, false, buf, sizeof(buf));
+        corner_set_text(s_item_next, buf);
         color_unselected(s_item_next, it);
     }
 

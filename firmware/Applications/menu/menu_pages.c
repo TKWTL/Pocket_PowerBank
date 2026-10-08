@@ -26,39 +26,41 @@ char menu_status_bat[24] = "--.-V --.-A";
  * 文案策略：menu_pages.c 里的 label/title/toggle 值保持英文，同时就是字符串键；
  * menu_tr(key) 按当前语言返回显示文本，未配置的键回退 key 本身。
  * 表按【菜单顺序】排列，便于核对新增文案是否有对应条目：
- *   根图标页 → About → Status(含三个子页) → Tools → Games → Settings
- *   → Display → Time → PowerBank(Protocol/PowerLimit/Battery/SW6306) → Reset
+ *   根图标页 → About → Status(Battery/Accelerator/Timer) → Tools → Games
+ *   → Settings(PowerBank/Display/Sleep & Wake/System)
+ *   → PowerBank(Protocol#1/Protocol#2/PowerLimit)
+ *   → Display → Sleep & Wake → System(Clock/Factory Option/Reset) → toggle/ENUM 取值
  * 表内每一项都在菜单树或 menu_tr() 里有使用点；新增文案务必同步加条目，
  * 否则中文态会显示英文（menu_tr 的回退行为）。
  * 中文字库（14/12px 部分字符集）待全部文案确认后生成，生成前切中文缺字形。 */
 static const menu_tr_t menu_tr_table[] = {
     /* ---- 根图标页 ---- */
-    { "Menu",            "Menu",             "菜单" },
-    { "Return",          "Return",           "返回" },
-    { "Settings",        "Settings",         "设置" },
-    { "Status",          "Status",           "状态" },
-    { "Tools",           "Tools",            "工具" },
-    { "Games",           "Games",            "游戏" },
-    { "About",           "About",            "关于" },
+    { "Menu",            "Menu",              "菜单" },
+    { "Return",          "Return",            "返回" },
+    { "Settings",        "Settings",          "设置" },
+    { "Status",          "Status",            "状态" },
+    { "Tools",           "Tools",             "工具" },
+    { "Games",           "Games",             "游戏" },
+    { "About",           "About",             "关于" },
     /* ---- About 页 ---- */
-    { "Pocket PowerBank","Pocket PowerBank", "口袋充电宝" },
-    { "FW 1.0.0",        "FW 1.0.0",         "固件 1.0.0" },
-    { "AT32F423+LVGL9",  "AT32F423+LVGL9",   "AT32F423+LVGL9" },
+    { "Pocket PowerBank","Pocket PowerBank",  "口袋充电宝" },
+    { "FW 1.0.0",        "FW 1.0.0",          "固件 1.0.0" },
+    { "AT32F423+LVGL9",  "AT32F423+LVGL9",    "AT32F423+LVGL9" },
     /* ---- Status 页 ---- */
-    { "Battery",         "Battery",          "电池" },
-    { "Accelerator",     "Accelerator",      "加速度" },
-    { "Timer",           "Timer",            "时钟" },
+    { "Battery",         "Battery",           "电池" },
+    { "Accelerator",     "Accelerator",       "加速度" },
+    { "Timer",           "Timer",             "时钟" },
     /* Status → Battery */
-    { "status.bat",      "%.2fV %.3fA",      "%.2fV %.3fA" },
-    { "status.maxcap",   "Max: %.2f Wh",     "最大能量: %.2f Wh" },
-    { "status.now",      "Now: %.2f Wh",     "当前能量: %.2f Wh" },
-    { "status.health",   "Health: %.0f%%",   "健康度: %.0f%%" },
-    { "status.cycles",   "Cycles: %.2f",     "循环: %.2f" },
-    { "status.learn",    "Learn:%s",         "容量学习:%s" },
-    { "learn.waiting",   "Waiting",          "等待" },
-    { "learn.ing",       "Learning",         "学习中" },
-    { "learn.done",      "Done",             "已完成" },
-    { "learn.unknown",   "Unknown",          "未知" },
+    { "status.bat",      "%.2fV %.3fA",       "%.2fV %.3fA" },
+    { "status.maxcap",   "Max: %.2f Wh",      "最大能量: %.2f Wh" },
+    { "status.now",      "Now: %.2f Wh",      "当前能量: %.2f Wh" },
+    { "status.health",   "Health: %.0f%%",    "健康度: %.0f%%" },
+    { "status.cycles",   "Cycles: %.2f",      "循环: %.2f" },
+    { "status.learn",    "Learn:%s",          "容量学习:%s" },
+    { "learn.waiting",   "Waiting",           "等待" },
+    { "learn.ing",       "Learning",          "学习中" },
+    { "learn.done",      "Done",              "已完成" },
+    { "learn.unknown",   "Unknown",           "未知" },
     /* Status → Accelerator */
     { "status.accel_x",  "X: %.2f g",        "X轴: %.2f g" },
     { "status.accel_y",  "Y: %.2f g",        "Y轴: %.2f g" },
@@ -71,39 +73,26 @@ static const menu_tr_t menu_tr_table[] = {
     /* ---- Tools 页 ---- */
     { "Screen Test",     "Screen Test",      "屏幕测试" },
     { "Coming Soon",     "Coming Soon",      "敬请期待" },
-    /* ---- Settings 页 ---- */
-    { "Display",         "Display",          "显示" },
-    { "Time",            "Time",             "时间" },
+    /* ---- Settings 页（四个子页 + Language 动作） ---- */
     { "PowerBank",       "PowerBank",        "移动电源" },
-    { "Reset",           "Reset",            "复位" },
+    { "Display",         "Display",          "显示" },
+    { "Sleep & Wake",    "Sleep & Wake",     "休眠与唤醒" },
+    { "System",          "System",           "系统" },
     { "Language",        "Language",         "语言" },
-    /* ---- Display 页 ---- */
-    { "Backlight",       "Backlight",        "背光" },
-    { "Theme",           "Theme",            "主题" },
-    { "Color",           "Color",            "颜色" },
-    { "Auto Sleep",      "Auto Sleep",       "自动休眠" },
-    { "None",            "None",             "不休眠" },
-    { "Auto Flip",       "Auto Flip",        "自动翻转" },
-    { "Light",           "Light",            "浅色" },
-    { "Dark",            "Dark",             "深色" },
-    /* ---- Time 页 ---- */
-    { "Sec",             "Sec",              "秒" },
-    { "Min",             "Min",              "分" },
-    { "Hour",            "Hour",             "时" },
-    { "Day",             "Day",              "日" },
-    { "Month",           "Month",            "月" },
-    { "Year",            "Year",             "年" },
-    { "Backup Charge",   "Backup Charge",    "备用电池充电" },
-    /* ---- PowerBank 页 ---- */
-    { "Protocol",        "Protocol",         "协议" },
+    /* Settings → PowerBank */
+    { "Protocol#1",      "Protocol#1",       "协议#1" },
+    { "Protocol#2",      "Protocol#2",       "协议#2" },
     { "PowerLimit",      "PowerLimit",       "功率限制" },
-    { "SW6306",          "SW6306",           "SW6306" },
-    /* PowerBank → Protocol */
+    /* PowerBank → Protocol#1（PD / PPS / UFCS） */
     { "PD out",          "PD out",           "PD 输出" },
     { "PD in",           "PD in",            "PD 输入" },
     { "PPS Broadcast",   "PPS Broadcast",    "PPS 能力播发" },
-    { "PPS1",            "PPS1",             "PPS1" },
-    { "PPS3",            "PPS3",             "PPS3" },
+    { "11V PPS",         "11V PPS",          "11V PPS" },
+    { "21V PPS",         "21V PPS",          "21V PPS" },
+    { "UFCS Broadcast",  "UFCS Broadcast",   "UFCS 能力播发" },
+    { "UFCS out",        "UFCS out",         "UFCS 输出" },
+    { "UFCS in",         "UFCS in",          "UFCS 输入" },
+    /* PowerBank → Protocol#2（其它快充协议） */
     { "QC",              "QC",               "QC" },
     { "FCP",             "FCP",              "FCP" },
     { "AFC out",         "AFC out",          "AFC 输出" },
@@ -115,19 +104,45 @@ static const menu_tr_t menu_tr_table[] = {
     { "VOOC out",        "VOOC out",         "VOOC 输出" },
     { "VOOC in",         "VOOC in",          "VOOC 输入" },
     { "SVOOC",           "SVOOC",            "SVOOC" },
-    { "UFCS Broadcast",  "UFCS Broadcast",   "UFCS 能力播发" },
-    { "UFCS out",        "UFCS out",         "UFCS 输出" },
-    { "UFCS in",         "UFCS in",          "UFCS 输入" },
     /* PowerBank → PowerLimit */
     { "Output",          "Output",           "输出功率" },
     { "Input",           "Input",            "输入功率" },
-    /* PowerBank → Battery */
+    /* ---- Display 页 ---- */
+    { "Backlight",       "Backlight",        "背光" },
+    { "Theme",           "Theme",            "主题" },
+    { "Color",           "Color",            "颜色" },
+    { "Auto Flip",       "Auto Flip",        "自动翻转" },
+    { "Light",           "Light",            "浅色" },
+    { "Dark",            "Dark",             "深色" },
+    /* ---- Sleep & Wake 页 ---- */
+    { "Auto Sleep",      "Auto Sleep",       "自动休眠" },
+    { "None",            "None",             "不休眠" },
+    { "Pickup Wake",     "Pickup Wake",      "抬起唤醒" },
+    { "Motion Wake",     "Motion Wake",      "运动唤醒" },
+    { "Auto return Homepage","Auto return Homepage","自动回主界面" },
+    /* ---- System 页 ---- */
+    { "Clock",           "Clock",            "时钟" },
+    /* Clock 子页的页面标题仍是 "Time"（菜单项标签改叫 Clock，页面标题未改） */
+    { "Time",            "Time",             "时间" },
+    { "Factory Unlock",  "Factory Unlock",   "出厂解锁" },
+    { "Factory Option",  "Factory Option",   "出厂选项" },
+    { "Transport Mode",  "Transport Mode",   "运输模式" },
+    { "Reset",           "Reset",            "复位" },
+    /* System → Clock（原 Settings→Time：SD3078 时间设置 + 后备电池充电） */
+    { "Sec",             "Sec",              "秒" },
+    { "Min",             "Min",              "分" },
+    { "Hour",            "Hour",             "时" },
+    { "Day",             "Day",              "日" },
+    { "Month",           "Month",            "月" },
+    { "Year",            "Year",             "年" },
+    { "Backup Charge",   "Backup Charge",    "备用电池充电" },
+    /* System → Factory Option */
+    { "Cycle Clear",     "Cycle Clear",      "循环清零" },
     { "Record SOH",      "Record SOH",       "记录SOH" },
-    /* PowerBank → SW6306 */
-    { "Init Now",        "Init Now",         "立即初始化" },
-    /* ---- Reset 页 ---- */
+    { "RBAT Calibrate",  "RBAT Calibrate",   "RBAT 校准" },
+    /* System → Reset */
     { "Reset Now",       "Reset Now",        "立即复位" },
-    /* ---- ENUM 取值（时间页后备电池充电模式） ---- */
+    /* ---- ENUM 取值（Clock 页后备电池充电模式） ---- */
     { "Auto",            "Auto",             "自动" },
     /* ---- Toggle 取值（menu_pages.c 的 on/off 文本 + menu_ui 默认值） ---- */
     { "ON",              "ON",               "开" },
@@ -203,6 +218,14 @@ static int32_t s_sleep_idx = 4;             /* 自动休眠：ENUM 选项下标�
  * 与背光一样是运行时设置，未持久化。 */
 static uint8_t s_auto_flip = 1;
 
+/* 占位动作：用于"界面先立起来、功能待接入"的条目（Sleep & Wake / System 里若干项）。
+ * 用 ACTION 而非 INFO，是为了保留"可执行条目"的形态与位置；功能接入时把对应
+ * 函数体填上即可，菜单结构不用再动。 */
+static void placeholder_apply(menu_item_t *it)
+{
+    (void)it;
+}
+
 /* 自动休眠选项文本（元素经 menu_tr 本地化；"None" 见 menu_ui.c 的 i18n 表） */
 static const char * const s_sleep_opts[] = {
     "None", "5s", "10s", "15s", "30s", "60s", "120s", "300s", "600s",
@@ -277,9 +300,10 @@ static void auto_flip_apply(menu_item_t *it)
  * 正式定义（也不带 static）链接属性一致；链接器合并为同一份 RAM 对象。 */
 menu_page_t menu_page_display, menu_page_time, menu_page_powerbank, menu_page_reset;
 menu_page_t menu_page_settings;
+menu_page_t menu_page_sleep_wake, menu_page_system, menu_page_factory_option;
 menu_page_t menu_page_status;      /* ui_task 用 &menu_page_status 判断当前页 */
 menu_page_t menu_page_status_battery, menu_page_status_accel, menu_page_status_timer;
-menu_page_t menu_page_protocol, menu_page_powerlimit, menu_page_battery_set, menu_page_sw6306;
+menu_page_t menu_page_protocol1, menu_page_protocol2, menu_page_powerlimit;
 menu_page_t menu_page_tools, menu_page_games, menu_page_about;
 
 /* ==================== 显示页（Display，三级，归拢显示相关项） ==================== */
@@ -288,7 +312,6 @@ static const menu_item_t menu_items_display[] = {
     MENU_ITEM_VALUE_("Backlight", &s_backlight, 1, 16, 1, NULL, backlight_apply),
     MENU_ITEM_TOGGLE_("Theme", &s_theme_toggle, "Light", "Dark", theme_toggle_apply),
     MENU_ITEM_VALUE_("Color", &s_theme_color_idx, 0, MENU_PALETTE_COUNT - 1, 1, NULL, theme_color_apply),
-    MENU_ITEM_ENUM_("Auto Sleep", &s_sleep_idx, s_sleep_opts, 9, sleep_apply),
     /* 自动翻转：ON=跟随重力方向；OFF=固定方向。
      * 自动翻转生效时画面会倒过来，按键在视觉上左右对调，所以菜单里 PREV/NEXT
      * 会跟着互换语义（见 ui_task 的 ui_scan_action）；主界面的 MENU/NEXT 语义是
@@ -296,6 +319,21 @@ static const menu_item_t menu_items_display[] = {
     MENU_ITEM_TOGGLE_("Auto Flip", &s_auto_flip, "On", "Off", auto_flip_apply),
 };
 MENU_PAGE_("Display", menu_page_display, menu_items_display);
+
+/* ==================== 休眠与唤醒页（Sleep & Wake，三级） ====================
+ * Auto Sleep 从 Display 移到这里作为第一项（休眠本身属于唤醒策略）；
+ * 其余项目前只有文本，功能待接入：
+ *  - Pickup Wake / Motion Wake：抬手、运动唤醒（需要 SC7A20 中断参与，未实现）
+ *  - Auto return Homepage：闲置自动回主界面（未实现）
+ * 用 & 而非 "and"：terminus-u14b 与 montserrat_12 都含 U+0026，字宽更省。 */
+static const menu_item_t menu_items_sleep_wake[] = {
+    MENU_ITEM_BACK_("Return"),
+    MENU_ITEM_ENUM_("Auto Sleep", &s_sleep_idx, s_sleep_opts, 9, sleep_apply),
+    MENU_ITEM_ACTION_("Pickup Wake", placeholder_apply),          /* TODO: 未实现 */
+    MENU_ITEM_ACTION_("Motion Wake", placeholder_apply),          /* TODO: 未实现 */
+    MENU_ITEM_ACTION_("Auto return Homepage", placeholder_apply), /* TODO: 未实现 */
+};
+MENU_PAGE_("Sleep & Wake", menu_page_sleep_wake, menu_items_sleep_wake);
 
 /* ==================== 时间页（Time，SD3078 时间设置 + 备用电池充电） ==================== */
 static int32_t s_time_sec = 0;      /* 秒 0~59 */
@@ -360,8 +398,9 @@ static const menu_item_t menu_items_time[] = {
 };
 MENU_PAGE_("Time", menu_page_time, menu_items_time);
 
-/* ==================== PowerBank → Protocol 子页 ====================
- * 配置真实状态放在 sw6306_algo；菜单只修改配置镜像并发 request。 */
+/* ==================== PowerBank → Protocol#1（PD / PPS / UFCS 播发与开关） ====================
+ * 配置真实状态放在 sw6306_algo；菜单只修改配置镜像并发 request。
+ * 拆成两页是为了单页 20 项太长：本页是 PD/PPS/UFCS 一组，其余快充协议在 Protocol#2。 */
 static void proto_apply(menu_item_t *it)
 {
     (void)it;
@@ -380,13 +419,22 @@ static void ufcs_broadcast_apply(menu_item_t *it)
     SW6306_AlgoRequestUFCSBroadcast();
 }
 
-static const menu_item_t menu_items_protocol[] = {
+static const menu_item_t menu_items_protocol1[] = {
     MENU_ITEM_BACK_("Return"),
     MENU_ITEM_TOGGLE_("PD out",  &SW6306_AlgoConfig.pd_out,  "On", "Off", proto_apply),
     MENU_ITEM_TOGGLE_("PD in",   &SW6306_AlgoConfig.pd_in,   "On", "Off", proto_apply),
     MENU_ITEM_ACTION_("PPS Broadcast", pps_broadcast_apply),   /* PPS 设置项之前：手动播发能力 */
-    MENU_ITEM_TOGGLE_("PPS1",    &SW6306_AlgoConfig.pps1,    "On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("PPS3",    &SW6306_AlgoConfig.pps3,    "On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("11V PPS", &SW6306_AlgoConfig.pps1,    "On", "Off", proto_apply),  /* 原 PPS1 */
+    MENU_ITEM_TOGGLE_("21V PPS", &SW6306_AlgoConfig.pps3,    "On", "Off", proto_apply),  /* 原 PPS3 */
+    MENU_ITEM_ACTION_("UFCS Broadcast", ufcs_broadcast_apply), /* UFCS 设置项之前：手动播发能力 */
+    MENU_ITEM_TOGGLE_("UFCS out",&SW6306_AlgoConfig.ufcs_out,"On", "Off", proto_apply),
+    MENU_ITEM_TOGGLE_("UFCS in", &SW6306_AlgoConfig.ufcs_in, "On", "Off", proto_apply),
+};
+MENU_PAGE_("Protocol#1", menu_page_protocol1, menu_items_protocol1);
+
+/* ==================== PowerBank → Protocol#2（其它快充协议） ==================== */
+static const menu_item_t menu_items_protocol2[] = {
+    MENU_ITEM_BACK_("Return"),
     MENU_ITEM_TOGGLE_("QC",      &SW6306_AlgoConfig.qc,      "On", "Off", proto_apply),
     MENU_ITEM_TOGGLE_("FCP",     &SW6306_AlgoConfig.fcp,     "On", "Off", proto_apply),
     MENU_ITEM_TOGGLE_("AFC out", &SW6306_AlgoConfig.afc_out, "On", "Off", proto_apply),
@@ -398,11 +446,8 @@ static const menu_item_t menu_items_protocol[] = {
     MENU_ITEM_TOGGLE_("VOOC out",&SW6306_AlgoConfig.vooc_out,"On", "Off", proto_apply),
     MENU_ITEM_TOGGLE_("VOOC in", &SW6306_AlgoConfig.vooc_in, "On", "Off", proto_apply),
     MENU_ITEM_TOGGLE_("SVOOC",   &SW6306_AlgoConfig.svooc,   "On", "Off", proto_apply),
-    MENU_ITEM_ACTION_("UFCS Broadcast", ufcs_broadcast_apply), /* UFCS 设置项之前：手动播发能力 */
-    MENU_ITEM_TOGGLE_("UFCS out",&SW6306_AlgoConfig.ufcs_out,"On", "Off", proto_apply),
-    MENU_ITEM_TOGGLE_("UFCS in", &SW6306_AlgoConfig.ufcs_in, "On", "Off", proto_apply),
 };
-MENU_PAGE_("Protocol", menu_page_protocol, menu_items_protocol);
+MENU_PAGE_("Protocol#2", menu_page_protocol2, menu_items_protocol2);
 
 /* ==================== PowerBank → PowerLimit 子页（输入/输出功率） ==================== */
 static void power_apply(menu_item_t *it)
@@ -418,42 +463,16 @@ static const menu_item_t menu_items_powerlimit[] = {
 };
 MENU_PAGE_("PowerLimit", menu_page_powerlimit, menu_items_powerlimit);
 
-/* ==================== PowerBank → Battery 子页（SOH 出厂基准） ====================
- * 容量学习由 sw6306_algo 固定常开并自动重新武装，不再提供用户开关。 */
-static void record_soh_apply(menu_item_t *it)
-{
-    (void)it;
-    SW6306_AlgoRequestRecordFactoryCapacity();
-}
-
-static const menu_item_t menu_items_battery_set[] = {
-    MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_ACTION_("Record SOH", record_soh_apply),
-};
-MENU_PAGE_("Battery", menu_page_battery_set, menu_items_battery_set);
-
-/* ==================== PowerBank → SW6306 子页（手动重新初始化） ====================
- * 菜单只发 RAM request；SW6306_task 负责失效 session、重初始化硬件，
- * 成功后 sw6306_algo 会重新应用当前协议/功率，并确保容量学习保持常开。 */
-static void sw6306_reinit_apply(menu_item_t *it)
-{
-    (void)it;
-    SW6306_AlgoRequestReinit();
-}
-
-static const menu_item_t menu_items_sw6306[] = {
-    MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_ACTION_("Init Now", sw6306_reinit_apply),
-};
-MENU_PAGE_("SW6306", menu_page_sw6306, menu_items_sw6306);
-
-/* ==================== 充电宝页（PowerBank，套娃四个子页） ==================== */
+/* ==================== PowerBank 页（Protocol#1/#2 + PowerLimit） ====================
+ * Battery / SW6306 两个子页已删除：
+ *  - 容量学习由 sw6306_algo 固定常开，不再需要用户开关；
+ *  - SW6306 重初始化也不在菜单里手动做。
+ * Record SOH 移到 System → Factory Option。 */
 static const menu_item_t menu_items_powerbank[] = {
     MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_PAGE_("Protocol",   &menu_page_protocol),
+    MENU_ITEM_PAGE_("Protocol#1", &menu_page_protocol1),
+    MENU_ITEM_PAGE_("Protocol#2", &menu_page_protocol2),
     MENU_ITEM_PAGE_("PowerLimit", &menu_page_powerlimit),
-    MENU_ITEM_PAGE_("Battery",    &menu_page_battery_set),
-    MENU_ITEM_PAGE_("SW6306",     &menu_page_sw6306),
 };
 MENU_PAGE_("PowerBank", menu_page_powerbank, menu_items_powerbank);
 
@@ -464,16 +483,49 @@ static const menu_item_t menu_items_reset[] = {
 };
 MENU_PAGE_("Reset", menu_page_reset, menu_items_reset);
 
-/* ==================== 设置页（二级，套娃引用上面的子页） ==================== */
+/* ==================== 设置页（二级，四个子页） ====================
+ * PowerBank / Display / Sleep & Wake / System。Language 单列为动作项（中英切换）。 */
 static const menu_item_t menu_items_settings[] = {
     MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_PAGE_("PowerBank", &menu_page_powerbank),
-    MENU_ITEM_PAGE_("Display",   &menu_page_display),
-    MENU_ITEM_PAGE_("Time",      &menu_page_time),
+    MENU_ITEM_PAGE_("PowerBank",    &menu_page_powerbank),
+    MENU_ITEM_PAGE_("Display",      &menu_page_display),
+    MENU_ITEM_PAGE_("Sleep & Wake", &menu_page_sleep_wake),
+    MENU_ITEM_PAGE_("System",       &menu_page_system),
     MENU_ITEM_ACTION_("Language", lang_apply),   /* 单击即在中/英之间切换 */
-    MENU_ITEM_PAGE_("Reset",     &menu_page_reset),
 };
 MENU_PAGE_("Settings", menu_page_settings, menu_items_settings);
+
+/* ==================== System 页（三级：时间/出厂/运输/复位） ====================
+ * 除 Clock（原 Settings→Time）与 Reset（真实复位）外，其余为占位：
+ *  - Factory Unlock：解锁出厂区（未实现）
+ *  - Factory Option：Factory Unlock 之后才能进的出厂操作子页
+ *  - Transport Mode：运输模式（未实现）
+ * Record SOH 从已删除的 PowerBank→Battery 移到这里。 */
+/* Record SOH：把当前库仑计容量记录为 SOH 出厂基准（菜单只发 RAM request）。
+ * 原在 PowerBank→Battery 页，该页删除后移到 System→Factory Option。 */
+static void record_soh_apply(menu_item_t *it)
+{
+    (void)it;
+    SW6306_AlgoRequestRecordFactoryCapacity();
+}
+
+static const menu_item_t menu_items_factory_option[] = {
+    MENU_ITEM_BACK_("Return"),
+    MENU_ITEM_ACTION_("Cycle Clear",    placeholder_apply),  /* TODO: 未实现 */
+    MENU_ITEM_ACTION_("Record SOH",     record_soh_apply),   /* 唯一已实现项 */
+    MENU_ITEM_ACTION_("RBAT Calibrate", placeholder_apply),  /* TODO: 未实现 */
+};
+MENU_PAGE_("Factory Option", menu_page_factory_option, menu_items_factory_option);
+
+static const menu_item_t menu_items_system[] = {
+    MENU_ITEM_BACK_("Return"),
+    MENU_ITEM_PAGE_("Clock",           &menu_page_time),
+    MENU_ITEM_ACTION_("Factory Unlock", placeholder_apply),  /* TODO: 未实现 */
+    MENU_ITEM_PAGE_("Factory Option",  &menu_page_factory_option),
+    MENU_ITEM_ACTION_("Transport Mode", placeholder_apply),  /* TODO: 未实现 */
+    MENU_ITEM_PAGE_("Reset",           &menu_page_reset),
+};
+MENU_PAGE_("System", menu_page_system, menu_items_system);
 
 /* ==================== 状态页（含 Battery / Accelerator / Timer 子页） ==================== */
 

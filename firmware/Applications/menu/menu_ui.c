@@ -277,9 +277,13 @@ static void center_set_text(lv_obj_t *lbl, const char *text, uint8_t editing)
     lv_label_set_text(lbl, text ? text : "");
 }
 
-/* 固定宽度中心 box 水平居中。 */
+/* 固定宽度中心 box 水平居中。
+ * 必须先 update_layout：lv_obj_get_width() 读的是 obj->coords 缓存，而
+ * lv_obj_set_width() 只把布局标脏、不立即改写 coords —— 少了这一步就是拿
+ * 『上一个角色的宽度』算居中，x 会偏 (新宽-旧宽)/2。 */
 static void item_recenter(lv_obj_t *label)
 {
+    lv_obj_update_layout(label);
     lv_obj_set_x(label, (MENU_SCR_W - lv_obj_get_width(label)) / 2);
 }
 
@@ -287,6 +291,7 @@ static void item_recenter(lv_obj_t *label)
 static void pos_next_corner(lv_obj_t *lbl)
 {
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_update_layout(lbl);   /* 同上：先刷新 coords 再取宽度 */
     lv_obj_set_pos(lbl, MENU_SCR_W - lv_obj_get_width(lbl) - MENU_CORNER_X, MENU_ROW_BOT_Y);
 }
 

@@ -934,6 +934,7 @@ struct SW6306_StatusTypedef
 #define SW6306_CHG12_CT_6C          0x00U//芯片充电恒温环阈值60°C
 
 //0x114 SW6306_CTRG_DCDC0           BUCK-BOOST变换器设置0
+#define SW6306_DCDC0_MSK            0xC0U//BUCK-BOOST变换器设置0寄存器有效位
 #define SW6306_DCDC0_F500K          0xC0U//开关频率500K
 #define SW6306_DCDC0_F400K          0x80U//开关频率400K
 #define SW6306_DCDC0_F200K          0x40U//开关频率200K

@@ -48,24 +48,22 @@ bool menu_is_active(void)
     return s_menu.active;
 }
 
-/* 进入页面时的默认选中项：
- *  - 文本页：last_index==0（从未选过/停在 Return）时跳到 Return 后第一项；
- *  - 图标页：last_index 完整保留（Return 也是真实图标，"退出保留选中图标"要求
- *    连停在 Return 也要记住），仅做越界保护。 */
+/* 进入页面时的默认位置：
+ * TEXT恢复last_index且首次通常跳过Return；ICON完整保留；WORD没有条目索引。 */
 static uint8_t menu_entry_index(const menu_page_t *pg)
 {
-    uint8_t idx = pg->last_index;
+    uint8_t idx;
+
+    if (!pg || pg->type == MENU_PAGE_WORD) return 0U;
+
+    idx = pg->last_index;
     if (pg->type != MENU_PAGE_ICON) {
-        if (idx == 0) {
-            idx = 1;
-            if (idx >= pg->item_count) {
-                idx = 0;
-            }
+        if (idx == 0U) {
+            idx = 1U;
+            if (idx >= pg->item_count) idx = 0U;
         }
-    } else {
-        if (idx >= pg->item_count) {
-            idx = 0;
-        }
+    } else if (idx >= pg->item_count) {
+        idx = 0U;
     }
     return idx;
 }
@@ -172,22 +170,28 @@ const menu_page_t *menu_root_page(void)
 /* 循环滚动（MiaoUI 环形链表特性）：只要条目数 > 1 即可双向循环 */
 bool menu_has_prev(void)
 {
-    return s_menu.page && (s_menu.page->item_count > 1);
+    if (!s_menu.page) return false;
+    if (s_menu.page->type == MENU_PAGE_WORD) {
+        return (s_menu.page->word_mode == MENU_WORD_INFO) &&
+               (s_menu.page->word_top > 0U);
+    }
+    return s_menu.page->item_count > 1U;
 }
 
 bool menu_has_next(void)
 {
-    return s_menu.page && (s_menu.page->item_count > 1);
+    if (!s_menu.page) return false;
+    if (s_menu.page->type == MENU_PAGE_WORD) {
+        return (s_menu.page->word_mode == MENU_WORD_INFO) &&
+               ((uint16_t)s_menu.page->word_top + 3U < s_menu.page->word_line_count);
+    }
+    return s_menu.page->item_count > 1U;
 }
 
 const menu_item_t *menu_current_item(void)
 {
-    if (!s_menu.page) {
-        return NULL;
-    }
-    if (s_menu.index >= s_menu.page->item_count) {
-        return NULL;
-    }
+    if (!s_menu.page || s_menu.page->type == MENU_PAGE_WORD) return NULL;
+    if (s_menu.index >= s_menu.page->item_count) return NULL;
     return &s_menu.page->items[s_menu.index];
 }
 
@@ -200,8 +204,9 @@ static void push_page(menu_page_t *pg)
        图标页的滚动位置 head_x 就存在 page 结构里，进入下一级即随页面保存 */
     s_menu.page->last_index = s_menu.index;
     s_menu.page    = pg;
-    s_menu.index   = menu_entry_index(pg);   /* 进入子页：默认从 Return 后第一项开始，或恢复上次选中 */
+    s_menu.index   = menu_entry_index(pg);
     pg->last_index = s_menu.index;
+    if (pg->type == MENU_PAGE_WORD) pg->word_top = 0U;
     s_menu.editing = false;
     s_menu.nav_dir = 1;                /* 前进 */
     /* 子页若是图标页，重置滚动位置为选中项居中 */
@@ -235,6 +240,30 @@ void menu_handle_key(uint32_t lv_key)
     const menu_item_t *it;
 
     if (!s_menu.active) {
+        return;
+    }
+
+    /* --- WORD独立按键语义：完全绕过TEXT条目导航 --- */
+    if (s_menu.page && s_menu.page->type == MENU_PAGE_WORD) {
+        menu_page_t *pg = s_menu.page;
+
+        if (pg->word_mode == MENU_WORD_CONFIRM) {
+            if (lv_key == LV_KEY_ENTER) {
+                if (pg->word_action) pg->word_action(NULL);
+                /* action若返回（例如保存失败），继续停在确认页。 */
+            } else if (lv_key == LV_KEY_PREV || lv_key == LV_KEY_NEXT) {
+                pop_page();
+            }
+        } else {
+            if (lv_key == LV_KEY_NEXT) {
+                if ((uint16_t)pg->word_top + 3U < pg->word_line_count) pg->word_top++;
+            } else if (lv_key == LV_KEY_PREV) {
+                if (pg->word_top > 0U) pg->word_top--;
+            } else if (lv_key == LV_KEY_ENTER) {
+                pop_page();
+            }
+        }
+        request_redraw();
         return;
     }
 

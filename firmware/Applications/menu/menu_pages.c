@@ -42,10 +42,11 @@ static const menu_tr_t menu_tr_table[] = {
     { "Tools",           "Tools",             "工具" },
     { "Games",           "Games",             "游戏" },
     { "About",           "About",             "关于" },
-    /* ---- About 页 ---- */
-    { "Pocket PowerBank","Pocket PowerBank",  "口袋充电宝" },
-    { "FW 1.0.0",        "FW 1.0.0",          "固件 1.0.0" },
-    { "AT32F423+LVGL9",  "AT32F423+LVGL9",    "AT32F423+LVGL9" },
+    /* ---- About WORD页 ---- */
+    { "Pocket PowerBank",       "Pocket PowerBank",       "口袋充电宝" },
+    { "Firmware 1.2.0",         "Firmware 1.2.0",         "固件 1.2.0" },
+    { "AT32F423 + LVGL 9.4",    "AT32F423 + LVGL 9.4",    "AT32F423 + LVGL 9.4" },
+    { "Open Source Hardware",    "Open Source Hardware",   "开源硬件" },
     /* ---- Status 页 ---- */
     { "Battery",         "Battery",           "电池" },
     { "Accelerator",     "Accelerator",       "加速度" },
@@ -142,8 +143,10 @@ static const menu_tr_t menu_tr_table[] = {
     { "Cycle Clear",     "Cycle Clear",      "循环清零" },
     { "Record SOH",      "Record SOH",       "记录SOH" },
     { "RBAT Calibrate",  "RBAT Calibrate",   "RBAT 校准" },
-    /* System → Reset */
-    { "Reset Now",       "Reset Now",        "立即复位" },
+    /* System → Reset WORD确认页 */
+    { "System Reset",             "System Reset",             "系统复位" },
+    { "All Settings Will Reset",  "All Settings Will Reset",  "所有设置将恢复默认" },
+    { "CONF: RESET OTHER: EXIT",  "CONF: RESET OTHER: EXIT",  "确认:复位  其他键:退出" },
     /* ---- ENUM 取值（Clock 页后备电池充电模式） ---- */
     { "Auto",            "Auto",             "自动" },
     /* ---- Toggle 取值（menu_pages.c 的 on/off 文本 + menu_ui 默认值） ---- */
@@ -479,12 +482,14 @@ static const menu_item_t menu_items_powerbank[] = {
 };
 MENU_PAGE_("PowerBank", menu_page_powerbank, menu_items_powerbank);
 
-/* ==================== 复位页（Reset，真实触发系统复位；动作函数在 functions 模块） ==================== */
-static const menu_item_t menu_items_reset[] = {
-    MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_ACTION_("Reset Now", action_reset_now),
+/* ==================== Reset WORD_CONFIRM ====================
+ * 只恢复用户设置，不清EFC/SOH/硬件校准等隐藏NVM数据。 */
+static const char * const word_reset[] = {
+    "System Reset",
+    "All Settings Will Reset",
+    "CONF: RESET OTHER: EXIT",
 };
-MENU_PAGE_("Reset", menu_page_reset, menu_items_reset);
+MENU_WORD_CONFIRM_(menu_page_reset, word_reset, action_reset_now);
 
 /* ==================== 设置页（二级，四个子页） ====================
  * PowerBank / Display / Sleep & Wake / System（Language 在 System 里）。 */
@@ -679,14 +684,15 @@ static const menu_item_t menu_items_games[] = {
 };
 MENU_PAGE_("Games", menu_page_games, menu_items_games);
 
-/* ==================== 关于页 ==================== */
-static const menu_item_t menu_items_about[] = {
-    MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_INFO_("Pocket PowerBank"),
-    MENU_ITEM_INFO_("FW 1.0.0"),
-    MENU_ITEM_INFO_("AT32F423+LVGL9"),
+/* ==================== About WORD_INFO ====================
+ * 3行窗口，PREV/NEXT有边界滚动，CONF返回根ICON页。 */
+static const char * const word_about[] = {
+    "Pocket PowerBank",
+    "Firmware 1.2.0",
+    "AT32F423 + LVGL 9.4",
+    "Open Source Hardware",
 };
-MENU_PAGE_("About", menu_page_about, menu_items_about);
+MENU_WORD_INFO_(menu_page_about, word_about);
 
 /* ==================== 根页（图标页，菜单根节点；套娃引用各子页） ==================== */
 static const menu_item_t menu_items_root[] = {

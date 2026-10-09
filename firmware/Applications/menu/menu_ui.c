@@ -59,6 +59,7 @@ static lv_obj_t *s_item;       /* 中间：当前条目（高亮，滑出/静止
 static lv_obj_t *s_item_in;    /* 中间：滑入条目（仅动画期间显示） */
 static lv_obj_t *s_item_next;  /* 右下：下一项（灰） */
 static lv_obj_t *s_item_next_in; /* 右下：动画期间屏外滑入的下一项 */
+static lv_obj_t *s_word_line[3]; /* WORD：独立3行全屏文本窗口 */
 
 /* PID 滑动状态（斜向：x/y 各一组） */
 static pid_anim_t s_pid_out;   /* 滑出 x */
@@ -816,6 +817,10 @@ static void apply_theme(const menu_page_t *pg, uint8_t index)
     lv_obj_set_style_text_font(s_item_in,        menu_font_main(), 0);
     lv_obj_set_style_text_font(s_icon_hint,  menu_font_small(), 0);
     lv_obj_set_style_text_font(s_icon_clock, menu_font_small(), 0);
+    for (i = 0; i < 3U; i++) {
+        lv_obj_set_style_text_font(s_word_line[i], menu_font_small(), 0);
+        lv_obj_set_style_text_color(s_word_line[i], t->text, 0);
+    }
     /* 主题色（primary，可改）：菜单名称与页码，使 Color 切换可见 */
     lv_obj_set_style_text_color(s_header, t->primary, 0);
     lv_obj_set_style_text_color(s_indicator, t->primary, 0);
@@ -915,6 +920,23 @@ static void icon_clock_tick(lv_timer_t *t)
 }
 
 /* 图标页重绘（redraw 时调用）：初始化/滚动目标/透明度目标/绑定 src */
+/* ---------- WORD 独立3行全屏文本渲染 ----------
+ * 不复用TEXT的标题/页码/角落/中心label，也不参与任何PID动画。 */
+static void word_redraw(const menu_page_t *pg)
+{
+    uint8_t i;
+
+    for (i = 0U; i < 3U; i++) {
+        uint16_t line = pg ? ((uint16_t)pg->word_top + i) : 0U;
+        const char *text = "";
+        if (pg && pg->word_lines && line < pg->word_line_count) {
+            text = menu_tr(pg->word_lines[line]);
+        }
+        lv_label_set_text(s_word_line[i], text ? text : "");
+    }
+    lv_obj_invalidate(s_scr);
+}
+
 static void icon_redraw(const menu_state_t *st, const menu_page_t *pg)
 {
     uint8_t i, n = pg->item_count;
@@ -1157,6 +1179,20 @@ lv_obj_t *menu_ui_create(void)
     center_set_text(s_item_in, "", 0U);
     lv_obj_add_flag(s_item_in, LV_OBJ_FLAG_HIDDEN);
 
+    /* WORD页：固定3行，x=2 / width=156 / y=0,13,26；始终CLIP并居中。
+     * 只创建一次，进入WORD时显示，其它页面全部隐藏。 */
+    for (uint8_t i = 0U; i < 3U; i++) {
+        s_word_line[i] = lv_label_create(s_scr);
+        lv_obj_set_pos(s_word_line[i], 2, (int32_t)i * 13);
+        lv_obj_set_width(s_word_line[i], 156);
+        lv_obj_set_height(s_word_line[i], one_line);
+        lv_obj_set_style_pad_all(s_word_line[i], 0, 0);
+        lv_obj_set_style_text_align(s_word_line[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(s_word_line[i], LV_LABEL_LONG_MODE_CLIP);
+        lv_label_set_text(s_word_line[i], "");
+        lv_obj_add_flag(s_word_line[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
     /* 图标页顶部文字条（图标下对齐后空出的上方空间，12px 高亮文字） */
     s_icon_hint = lv_label_create(s_scr);
     lv_obj_set_pos(s_icon_hint, 3, ICON_TOP_Y);
@@ -1195,7 +1231,7 @@ void menu_ui_redraw(void)
 {
     const menu_state_t *st = menu_get_state();
     const menu_page_t  *pg = menu_current_page();
-    bool changed, page_changed, icon_page;
+    bool changed, page_changed, icon_page, word_page;
     char buf[32];
 
     /* 用本次 redraw 的 (pg, index) 上色：不能让它自己回头读 menu_current_item()，
@@ -1207,6 +1243,7 @@ void menu_ui_redraw(void)
     s_last_page = pg;
     apply_theme(pg, st->index);
 
+    word_page = st->active && pg && pg->type == MENU_PAGE_WORD;
     icon_page = st->active && pg && pg->type == MENU_PAGE_ICON
                 && pg->icons && pg->item_count > 0;
 
@@ -1217,6 +1254,7 @@ void menu_ui_redraw(void)
         lv_obj_add_flag(s_item_in, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_item_prev_in, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_item_next_in, LV_OBJ_FLAG_HIDDEN);
+        for (uint8_t i = 0U; i < 3U; i++) lv_obj_add_flag(s_word_line[i], LV_OBJ_FLAG_HIDDEN);
         s_last_active = false;
         s_icon_page_was = false;
         return;
@@ -1226,8 +1264,12 @@ void menu_ui_redraw(void)
         s_first_after_open = true;
     }
 
-    /* 文本页元素与图标页元素互斥显隐 */
-    if (icon_page) {
+    /* TEXT / ICON / WORD 三种renderer完全互斥。 */
+    if (word_page) {
+        pid_stop_all();
+        s_sliding = false;
+        s_slide_dir = 0;
+
         lv_obj_add_flag(s_header, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_indicator, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_item_prev, LV_OBJ_FLAG_HIDDEN);
@@ -1236,13 +1278,27 @@ void menu_ui_redraw(void)
         lv_obj_add_flag(s_item_in, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_item_next, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_item_next_in, LV_OBJ_FLAG_HIDDEN);
-        /* 图标页：显示顶部文字条（名称+时间） */
+        lv_obj_add_flag(s_icon_hint, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_icon_clock, LV_OBJ_FLAG_HIDDEN);
+        for (uint8_t i = 0U; i < s_icon_count; i++) {
+            lv_obj_add_flag(s_icons[i].img, LV_OBJ_FLAG_HIDDEN);
+        }
+        s_icon_count = 0U;
+        for (uint8_t i = 0U; i < 3U; i++) {
+            lv_obj_remove_flag(s_word_line[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    } else if (icon_page) {
+        for (uint8_t i = 0U; i < 3U; i++) lv_obj_add_flag(s_word_line[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_header, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_indicator, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_item_prev, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_item_prev_in, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_item, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_item_in, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_item_next, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_item_next_in, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_icon_hint, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_icon_clock, LV_OBJ_FLAG_HIDDEN);
-        /* 必须显式停掉滑动与四个角落 PID：menu_ui_anim_tick 里角落 PID 的执行
-         * 只判各自的 .active，不判 s_sliding——只清标志的话，文本页切走之后
-         * 已被隐藏的文本对象仍会被动画定时器继续搬动（位置/显隐残留）。
-         * 中断方向也一并清掉，避免下次进文本页沿用旧方向收尾。 */
         if (s_sliding || s_prev_out_x.active || s_next_out_x.active ||
             s_prev_in_x.active || s_next_in_x.active) {
             pid_stop_all();
@@ -1250,22 +1306,20 @@ void menu_ui_redraw(void)
             s_slide_dir = 0;
         }
     } else {
+        for (uint8_t i = 0U; i < 3U; i++) lv_obj_add_flag(s_word_line[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_header, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_indicator, LV_OBJ_FLAG_HIDDEN);
-        /* 只无条件显示静止态的 3 个文本对象（左上/中间/右下）。
-         * s_item_prev_in / s_item_in / s_item_next_in 是动画专用临时对象，
-         * 绝不能在这里 unhide：否则动画途中（不同任务/定时器触发的 redraw）
-         * 会把 slide_start 刚隐藏的滑入对象连文本一起显示出来，形成"完整的旧字符"
-         * 残影。它们只允许由 slide_start / slide_commit_* / snap_static 控制显隐。 */
         lv_obj_remove_flag(s_item_prev, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_item,      LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_item_next, LV_OBJ_FLAG_HIDDEN);
-        /* 文本页：隐藏图标页文字条 */
         lv_obj_add_flag(s_icon_hint, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_icon_clock, LV_OBJ_FLAG_HIDDEN);
     }
 
-    if (icon_page) {
+    if (word_page) {
+        word_redraw(pg);
+        s_icon_page = false;
+    } else if (icon_page) {
         icon_redraw(st, pg);
         s_icon_page = true;
     } else {

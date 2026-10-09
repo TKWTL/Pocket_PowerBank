@@ -20,6 +20,7 @@
 #include "at32f423_crc.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "bsp_usart.h"
 #include <string.h>
 
 #define NVM_OFF_FACTORY_CAPACITY_WH     0U
@@ -136,6 +137,8 @@ void nvm_reset_defaults(void)
     s_nvm_valid = 0U;
     s_nvm_dirty = 0U;
     taskEXIT_CRITICAL();
+
+    USART_Printf("[NVM] Reset defaults\r\n");
 }
 
 uint8_t nvm_is_valid(void)
@@ -197,6 +200,8 @@ i2c_status_type nvm_load(void)
     s_nvm_valid = 1U;
     s_nvm_dirty = 0U;
     taskEXIT_CRITICAL();
+
+    USART_Printf("[NVM] Restore OK\r\n");
     return I2C_OK;
 }
 
@@ -232,7 +237,10 @@ i2c_status_type nvm_save(void)
     block[NVM_CRC_OFFSET + 1U] = (uint8_t)(crc >> 8);
 
     st = SD3078_SramWrite(0U, block, sizeof(block));
-    if (st == I2C_OK) s_nvm_valid = 1U;
+    if (st == I2C_OK) {
+        s_nvm_valid = 1U;
+        USART_Printf("[NVM] Write OK\r\n");
+    }
     return st;
 }
 

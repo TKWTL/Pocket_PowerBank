@@ -36,7 +36,8 @@ void main_screen_run(app_action_t action);
 void ui_app_register(void (*run)(app_action_t));
 
 /* ---------- 一次性动作函数（MENU_ITEM_ACTION_ 调用） ---------- */
-void action_reset_now(menu_item_t *it);   /* 立即系统复位 */
+void action_reset_now(menu_item_t *it);   /* WORD_CONFIRM：请求恢复用户设置并复位 */
+void action_reset_process(void);            /* load_task：NVM成功落盘后真正复位 */
 
 #ifdef __cplusplus
 }

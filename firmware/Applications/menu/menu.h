@@ -50,9 +50,15 @@ typedef void (*menu_action_fn)(menu_item_t *it);
 
 /* ---------- 页面类型 ---------- */
 typedef enum {
-    MENU_PAGE_TEXT = 0,   /* 文本列表页（一屏一项，现有行为） */
-    MENU_PAGE_ICON,       /* 图标页（第一级菜单，选中放大/未选中缩小+变灰） */
+    MENU_PAGE_TEXT = 0,   /* 对角线文本菜单 */
+    MENU_PAGE_ICON,       /* 图标菜单 */
+    MENU_PAGE_WORD,       /* 独立3行全屏纯文本阅读/确认页 */
 } menu_page_type_t;
+
+typedef enum {
+    MENU_WORD_INFO = 0,   /* PREV/NEXT有边界滚动，CONF返回 */
+    MENU_WORD_CONFIRM     /* CONF执行，PREV/NEXT退出；建议<=3行 */
+} menu_word_mode_t;
 
 /* 图标页条目：图标 + 标签（与 items 数组一一对应） */
 typedef struct {
@@ -90,9 +96,15 @@ struct menu_page_t {
     const menu_item_t *items;    /* 条目数组 */
     uint8_t item_count;
     uint8_t last_index;          /* 记忆：上次在该页选中的条目（MiaoUI lastJumpItem 特性） */
-    uint8_t type;                /* menu_page_type_t：MENU_PAGE_TEXT / MENU_PAGE_ICON */
-    int16_t head_x;              /* 图标页：滚动偏移（进入下一级时记忆；退出菜单时重置） */
-    const menu_icon_t *icons;    /* 图标页：图标数组（与 items 一一对应，可 NULL） */
+    uint8_t type;                /* menu_page_type_t */
+    int16_t head_x;              /* ICON：滚动偏移 */
+    const menu_icon_t *icons;    /* ICON：图标数组 */
+
+    const char * const *word_lines; /* WORD：逻辑行数组 */
+    uint8_t word_line_count;        /* WORD：逻辑行数 */
+    uint8_t word_top;               /* WORD_INFO：3行窗口首行 */
+    uint8_t word_mode;              /* menu_word_mode_t */
+    menu_action_fn word_action;     /* WORD_CONFIRM：CONF动作，可NULL */
 };
 
 /* ==================== 菜单配置宏（集中声明菜单树用） ====================
@@ -119,11 +131,20 @@ struct menu_page_t {
 /* 文本页定义（items 必须是可 sizeof 的数组） */
 #define MENU_PAGE_(title, var, items) \
     menu_page_t var = { (title), (items), \
-        (uint8_t)(sizeof(items) / sizeof((items)[0])), 0, MENU_PAGE_TEXT, 0, NULL }
+        (uint8_t)(sizeof(items) / sizeof((items)[0])), 0, MENU_PAGE_TEXT, 0, NULL, \
+        NULL, 0, 0, MENU_WORD_INFO, NULL }
 /* 图标页定义 */
 #define MENU_PAGE_ICON_(title, var, items, icons) \
     menu_page_t var = { (title), (items), \
-        (uint8_t)(sizeof(items) / sizeof((items)[0])), 0, MENU_PAGE_ICON, 0, (icons) }
+        (uint8_t)(sizeof(items) / sizeof((items)[0])), 0, MENU_PAGE_ICON, 0, (icons), \
+        NULL, 0, 0, MENU_WORD_INFO, NULL }
+/* WORD页：独立全屏3行文本窗口，不复用TEXT布局/动画。 */
+#define MENU_WORD_INFO_(var, lines) \
+    menu_page_t var = { NULL, NULL, 0, 0, MENU_PAGE_WORD, 0, NULL, \
+        (lines), (uint8_t)(sizeof(lines) / sizeof((lines)[0])), 0, MENU_WORD_INFO, NULL }
+#define MENU_WORD_CONFIRM_(var, lines, fn) \
+    menu_page_t var = { NULL, NULL, 0, 0, MENU_PAGE_WORD, 0, NULL, \
+        (lines), (uint8_t)(sizeof(lines) / sizeof((lines)[0])), 0, MENU_WORD_CONFIRM, (fn) }
 
 #define MENU_STACK_DEPTH 8
 

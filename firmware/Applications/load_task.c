@@ -157,6 +157,9 @@ void load_task(void *pvParameters)
                 if (s_sd3078_status == I2C_OK && s_nvm_ready && nvm_is_dirty()) {
                     s_sd3078_status = nvm_process();
                 }
+                if (s_sd3078_status == I2C_OK && s_nvm_ready) {
+                    action_reset_process();
+                }
 
                 if (s_sd3078_status == I2C_OK && ++sd3078_slow_cnt >= 120U) {
                     sd3078_slow_cnt = 0U;

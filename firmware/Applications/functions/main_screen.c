@@ -12,6 +12,7 @@
 #include "functions.h"       /* 本模块统一声明 */
 #include "main_icons.h"      /* 主界面电池 A8 位图 */
 #include <string.h>
+#include "mini_format.h"
 
 
 /* 主界面对象（应用生命周期：进入 create、退出 destroy） */
@@ -55,18 +56,18 @@ static void port_label_update(lv_obj_t *label)
     if (a_out && c_act) {
         /* 双口同时打开（A+C 放电 / 同时充放）：紧凑显示；多口无法逐口报协议 → 5V
          * LVGL recolor 色码后第一个空格不绘制 → 可见 A+C:5V（6 字符 = 48px） */
-        snprintf(buf, sizeof(buf), "#FF0000 A##000000 +#FFEF00 C##000000 :5V#");
+        mini_snprintf(buf, sizeof(buf), "#FF0000 A##000000 +#FFEF00 C##000000 :5V#");
     } else if (a_out) {
         /* 仅 A 口放电 */
         p_s = has_proto ? proto : "5V";
-        snprintf(buf, sizeof(buf), "#FF0000 A##000000 :%s#", p_s);
+        mini_snprintf(buf, sizeof(buf), "#FF0000 A##000000 :%s#", p_s);
     } else if (c_act) {
         /* 仅 C 口（输入或输出） */
         p_s = has_proto ? proto : "5V";
-        snprintf(buf, sizeof(buf), "#F0C000 C##000000 :%s#", p_s);
+        mini_snprintf(buf, sizeof(buf), "#F0C000 C##000000 :%s#", p_s);
     } else {
         /* 无端口启动（黑色，区别于白色内容） */
-        snprintf(buf, sizeof(buf), "#000000 OFF#");
+        mini_snprintf(buf, sizeof(buf), "#000000 OFF#");
     }
     lv_label_set_text_static(label, buf);
 }
@@ -89,7 +90,7 @@ static void power_label_update(lv_obj_t *label)
 
     if (ibus < 5U) uw = 0U;
     centiw = (uw + 5000U) / 10000U; /* 0.01W，四舍五入 */
-    snprintf(buf, sizeof(buf), "%02lu.%02luW",
+    mini_snprintf(buf, sizeof(buf), "%02lu.%02luW",
              (unsigned long)(centiw / 100U),
              (unsigned long)(centiw % 100U));
     lv_label_set_text_static(label, buf);
@@ -130,7 +131,7 @@ static void voltage_label_update(lv_obj_t *label)
     static char buf[8];
 
     lv_obj_set_style_text_font(label, menu_font_main(), 0);
-    snprintf(buf, sizeof(buf), "%02lu.%02luV",
+    mini_snprintf(buf, sizeof(buf), "%02lu.%02luV",
              (unsigned long)(cv / 100U),
              (unsigned long)(cv % 100U));
     lv_label_set_text_static(label, buf);
@@ -189,7 +190,7 @@ static void icon_update(void)
      * RTC 镜像无效时无走秒基准 → 保持常显不闪。 */
     {
         uint8_t pct = SW6306_ReadCapacity();
-        snprintf(buf, sizeof(buf), "%d%%", pct);
+        mini_snprintf(buf, sizeof(buf), "%d%%", pct);
         lv_label_set_text_static(s_bat_pct, buf);
         if (pct <= 5U && SW6306_IsDischarging()) {
             uint8_t rtc_valid = (SD3078_ReadMonth() >= 1U && SD3078_ReadMonth() <= 12U);
@@ -210,7 +211,7 @@ static void icon_update(void)
         uint32_t mag = (uint32_t)((t10 < 0) ? -t10 : t10);
         static char tbuf[10];
 
-        snprintf(tbuf, sizeof(tbuf), "%s%lu.%lu°C",
+        mini_snprintf(tbuf, sizeof(tbuf), "%s%lu.%lu°C",
                  (t10 < 0) ? "-" : "",
                  (unsigned long)(mag / 10U),
                  (unsigned long)(mag % 10U));
@@ -223,12 +224,12 @@ static void icon_update(void)
     if (SD3078_ReadMonth() >= 1U && SD3078_ReadMonth() <= 12U &&
         SD3078_ReadHour() <= 23U && SD3078_ReadMin() <= 59U) {
         if (SD3078_ReadSec() & 1U) {
-            snprintf(hbuf, sizeof(hbuf), "%02d %02d", SD3078_ReadHour(), SD3078_ReadMin());
+            mini_snprintf(hbuf, sizeof(hbuf), "%02d %02d", SD3078_ReadHour(), SD3078_ReadMin());
         } else {
-            snprintf(hbuf, sizeof(hbuf), "%02d:%02d", SD3078_ReadHour(), SD3078_ReadMin());
+            mini_snprintf(hbuf, sizeof(hbuf), "%02d:%02d", SD3078_ReadHour(), SD3078_ReadMin());
         }
     } else {
-        snprintf(hbuf, sizeof(hbuf), "--:--");
+        mini_snprintf(hbuf, sizeof(hbuf), "--:--");
     }
     lv_label_set_text_static(s_time_label, hbuf);
 }

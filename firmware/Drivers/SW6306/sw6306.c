@@ -1,4 +1,5 @@
 #include "sw6306.h"
+#include "bsp_usart.h"
 #include <math.h>
 
 /* initialized 默认 0（零初始化，.bss）：MCU 复位后即视为未初始化，
@@ -247,6 +248,71 @@ SW6306_RET SW6306_NTCTempLoad(SW6306_NOARG)
 float SW6306_ReadNTCTemp(void)//读取句柄中的 NTC 温度（°C，Beta 公式计算）
 {
     return SW6306_Status.ntc_temp;
+}
+
+/* 临时放电诊断寄存器 dump。
+ * 重点覆盖：
+ *  - 0x43/0x44 输出BUS/BAT限流、0x4F/0x51输出功率；
+ *  - DCHG1 多口3A限制、DCHG3 BAT限流、DCDC0峰值限流；
+ *  - PDFIX/PDPPS的PD档位/电流/PPS恒功率配置；
+ *  - 实时/历史故障与保护使能。
+ * 一次锁住I2C读取，打印放在解锁之后，避免串口阻塞期间占用总线。 */
+SW6306_RET SW6306_DebugDischargeDump(SW6306_NOARG)
+{
+    uint8_t l[13];
+    uint8_t h[20];
+    SW6306_FUNC_BEGIN;
+    SW6306_MUTEX_TAKE;
+
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_QCSTAT);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_QCSTAT,       &l[0]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_MODE,         &l[1]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT0,       &l[2]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_SYS_STAT,     &l[3]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_TYPEC,        &l[4]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_PORT_STA,     &l[5]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT1,       &l[6]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT2,       &l[7]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT3,       &l[8]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG_IBUS,    &l[9]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG_IBAT,    &l[10]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_POSET,        &l[11]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_POMAX,        &l[12]);
+
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_DCHG0);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG0,        &h[0]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG1,        &h[1]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG3,        &h[2]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG4,        &h[3]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG5,        &h[4]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCDC0,        &h[5]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCDC2,        &h[6]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PORTQC,       &h[7]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PD0,          &h[8]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PD1,          &h[9]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PD2,          &h[10]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PD11,         &h[11]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PPS0,         &h[12]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PPS1,         &h[13]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PPS2,         &h[14]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PPS3,         &h[15]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_IPPS,         &h[16]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_FAULT1,       &h[17]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_FAULT2,       &h[18]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_FAULT3,       &h[19]);
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_QCSTAT);
+    SW6306_MUTEX_GIVE;
+
+    USART_Printf("[SWDBG] %s VBUS=%u IBUS=%u VBAT=%u IBAT=%u\r\n",
+                 SW6306_ReadProtocol(), SW6306_ReadVBUS(), SW6306_ReadIBUS(),
+                 SW6306_ReadVBAT(), SW6306_ReadIBAT());
+    USART_Printf("[SWDBG] L 0F=%02X 12=%02X 15=%02X 18=%02X 19=%02X 1D=%02X 2A=%02X 2B=%02X 2C=%02X 43=%02X 44=%02X 4F=%02X 51=%02X\r\n",
+                 l[0],l[1],l[2],l[3],l[4],l[5],l[6],l[7],l[8],l[9],l[10],l[11],l[12]);
+    USART_Printf("[SWDBG] H 100=%02X 101=%02X 103=%02X 104=%02X 106=%02X 114=%02X 116=%02X 11F=%02X\r\n",
+                 h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7]);
+    USART_Printf("[SWDBG] PD 133=%02X 134=%02X 135=%02X 13E=%02X 13F=%02X 140=%02X 141=%02X 142=%02X 153=%02X 154=%02X 155=%02X 156=%02X\r\n",
+                 h[8],h[9],h[10],h[11],h[12],h[13],h[14],h[15],h[16],h[17],h[18],h[19]);
+    SW6306_FUNC_END;
 }
 
 SW6306_RET SW6306_PortStatusLoad(SW6306_NOARG)//更新端口状态镜像寄存器(0x13,0x18,0x19,0x1C,0x1D)

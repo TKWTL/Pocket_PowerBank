@@ -439,6 +439,11 @@
               <FilePath>..\..\Bootstrap\src\bsp_usart.c</FilePath>
             </File>
             <File>
+              <FileName>mini_format.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Bootstrap\src\mini_format.c</FilePath>
+            </File>
+            <File>
               <FileName>bsp_tmr.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\Bootstrap\src\bsp_tmr.c</FilePath>

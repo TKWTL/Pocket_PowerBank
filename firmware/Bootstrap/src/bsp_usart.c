@@ -1,4 +1,5 @@
 #include "bsp_usart.h"
+#include "mini_format.h"
 
 static uint8_t s_init_done;
 
@@ -77,16 +78,19 @@ void USART_SendString(const char *str)
     }
 }
 
+static void usart_format_putc(char ch, void *ctx)
+{
+    (void)ctx;
+    usart_tx_write((uint8_t)ch);
+}
+
 void USART_Printf(const char *format, ...)
 {
-    char buf[64];
     va_list arg;
 
     va_start(arg, format);
-    vsnprintf(buf, sizeof(buf), format, arg);
+    (void)mini_vformat(usart_format_putc, NULL, format, arg);
     va_end(arg);
-
-    USART_SendString(buf);
 }
 
 /* 被 at32f423_int.c 中的 DMA1_Channel6_IRQHandler 调用 */

@@ -12,6 +12,7 @@
  * 改文案时同步。菜单树的条目/页面声明顺序与表的注释分组一一对应。
  */
 #include <string.h>
+#include "mini_format.h"
 #include "menu_pages.h"
 #include "menu_theme.h"
 #include "menu_icons.h"     /* 根页图标（LVGL A8 位图） */
@@ -146,7 +147,7 @@ static const menu_tr_t menu_tr_table[] = {
     /* System → Reset WORD确认页 */
     { "System Reset",             "System Reset",             "系统复位" },
     { "All Settings Will Reset",  "All Settings Will Reset",  "所有设置将恢复默认" },
-    { "CONF: RESET OTHER: EXIT",  "CONF: RESET OTHER: EXIT",  "确认:复位  其他键:退出" },
+    { "CONF:RST OTHER:EXIT",  "CONF:RST OTHER:EXIT",  "确认:复位  其他键:退出" },
     /* ---- ENUM 取值（Clock 页后备电池充电模式） ---- */
     { "Auto",            "Auto",             "自动" },
     /* ---- Toggle 取值（menu_pages.c 的 on/off 文本 + menu_ui 默认值） ---- */
@@ -487,7 +488,7 @@ MENU_PAGE_("PowerBank", menu_page_powerbank, menu_items_powerbank);
 static const char * const word_reset[] = {
     "System Reset",
     "All Settings Will Reset",
-    "CONF: RESET OTHER: EXIT",
+    "CONF:RST OTHER:EXIT",
 };
 MENU_WORD_CONFIRM_(menu_page_reset, word_reset, action_reset_now);
 
@@ -597,12 +598,12 @@ void menu_status_refresh(void)
         uint32_t max_cwh = (uint32_t)(SW6306_ReadMaxEnergy_mWh() * 0.1f + 0.5f);
         uint32_t now_cwh = (uint32_t)(SW6306_ReadRemainEnergy_mWh() * 0.1f + 0.5f);
 
-        snprintf(menu_status_bat, sizeof(menu_status_bat), menu_tr("status.bat"),
+        mini_snprintf(menu_status_bat, sizeof(menu_status_bat), menu_tr("status.bat"),
                  (unsigned long)(vbat_cv / 100U), (unsigned long)(vbat_cv % 100U),
                  (unsigned long)(ibat_ma / 1000U), (unsigned long)(ibat_ma % 1000U));
-        snprintf(menu_status_maxcap, sizeof(menu_status_maxcap), menu_tr("status.maxcap"),
+        mini_snprintf(menu_status_maxcap, sizeof(menu_status_maxcap), menu_tr("status.maxcap"),
                  (unsigned long)(max_cwh / 100U), (unsigned long)(max_cwh % 100U));
-        snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), menu_tr("status.now"),
+        mini_snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), menu_tr("status.now"),
                  (unsigned long)(now_cwh / 100U), (unsigned long)(now_cwh % 100U));
 
         if (nvm_is_valid()) {
@@ -611,13 +612,13 @@ void menu_status_refresh(void)
             uint32_t soh_i = (soh > 0.0f) ? (uint32_t)(soh + 0.5f) : 0U;
             uint32_t efc_centi = (efc > 0.0f) ? (uint32_t)(efc * 100.0f + 0.5f) : 0U;
 
-            snprintf(menu_status_health, sizeof(menu_status_health), menu_tr("status.health"),
+            mini_snprintf(menu_status_health, sizeof(menu_status_health), menu_tr("status.health"),
                      (unsigned long)soh_i);
-            snprintf(menu_status_cycles, sizeof(menu_status_cycles), menu_tr("status.cycles"),
+            mini_snprintf(menu_status_cycles, sizeof(menu_status_cycles), menu_tr("status.cycles"),
                      (unsigned long)(efc_centi / 100U), (unsigned long)(efc_centi % 100U));
         } else {
-            snprintf(menu_status_health, sizeof(menu_status_health), "--");
-            snprintf(menu_status_cycles, sizeof(menu_status_cycles), "--");
+            mini_snprintf(menu_status_health, sizeof(menu_status_health), "--");
+            mini_snprintf(menu_status_cycles, sizeof(menu_status_cycles), "--");
         }
 
         {
@@ -629,15 +630,15 @@ void menu_status_refresh(void)
             case SW6306_LEARN_ST_DONE:    st = menu_tr("learn.done");    break;
             default:                      st = menu_tr("learn.unknown"); break;
             }
-            snprintf(menu_status_learn, sizeof(menu_status_learn), menu_tr("status.learn"), st);
+            mini_snprintf(menu_status_learn, sizeof(menu_status_learn), menu_tr("status.learn"), st);
         }
     } else {
-        snprintf(menu_status_bat,        sizeof(menu_status_bat),        "--");
-        snprintf(menu_status_maxcap,     sizeof(menu_status_maxcap),     "--");
-        snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), "--");
-        snprintf(menu_status_health,     sizeof(menu_status_health),     "--");
-        snprintf(menu_status_cycles,     sizeof(menu_status_cycles),     "--");
-        snprintf(menu_status_learn,      sizeof(menu_status_learn),      "--");
+        mini_snprintf(menu_status_bat,        sizeof(menu_status_bat),        "--");
+        mini_snprintf(menu_status_maxcap,     sizeof(menu_status_maxcap),     "--");
+        mini_snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), "--");
+        mini_snprintf(menu_status_health,     sizeof(menu_status_health),     "--");
+        mini_snprintf(menu_status_cycles,     sizeof(menu_status_cycles),     "--");
+        mini_snprintf(menu_status_learn,      sizeof(menu_status_learn),      "--");
     }
 
     /* ---- Accelerator：mg直接换算为0.01g整数，再格式化 ---- */
@@ -651,14 +652,14 @@ void menu_status_refresh(void)
         for (i = 0U; i < 3U; i++) {
             int32_t cg = (int32_t)(mg[i] * 0.1f + ((mg[i] >= 0.0f) ? 0.5f : -0.5f));
             uint32_t mag = (uint32_t)((cg < 0) ? -cg : cg);
-            snprintf(dst[i], len[i], menu_tr(key[i]),
+            mini_snprintf(dst[i], len[i], menu_tr(key[i]),
                      (cg < 0) ? "-" : "",
                      (unsigned long)(mag / 100U), (unsigned long)(mag % 100U));
         }
     } else {
-        snprintf(menu_status_accel_x, sizeof(menu_status_accel_x), "X: --");
-        snprintf(menu_status_accel_y, sizeof(menu_status_accel_y), "Y: --");
-        snprintf(menu_status_accel_z, sizeof(menu_status_accel_z), "Z: --");
+        mini_snprintf(menu_status_accel_x, sizeof(menu_status_accel_x), "X: --");
+        mini_snprintf(menu_status_accel_y, sizeof(menu_status_accel_y), "Y: --");
+        mini_snprintf(menu_status_accel_z, sizeof(menu_status_accel_z), "Z: --");
     }
 
     /* ---- Timer ---- */
@@ -667,23 +668,23 @@ void menu_status_refresh(void)
         SD3078_ReadHour() <= 23U && SD3078_ReadMin() <= 59U && SD3078_ReadSec() <= 59U) {
         uint32_t vbackup_cv = ((uint32_t)SD3078_ReadBatt() + 5U) / 10U;
 
-        snprintf(menu_status_time, sizeof(menu_status_time), menu_tr("status.time"),
+        mini_snprintf(menu_status_time, sizeof(menu_status_time), menu_tr("status.time"),
                  SD3078_ReadHour(), SD3078_ReadMin(), SD3078_ReadSec());
-        snprintf(menu_status_date, sizeof(menu_status_date), menu_tr("status.date"),
+        mini_snprintf(menu_status_date, sizeof(menu_status_date), menu_tr("status.date"),
                  SD3078_ReadYear(), SD3078_ReadMonth(), SD3078_ReadDay());
-        snprintf(menu_status_temp, sizeof(menu_status_temp), menu_tr("status.temp"),
+        mini_snprintf(menu_status_temp, sizeof(menu_status_temp), menu_tr("status.temp"),
                  (int)SD3078_ReadTemp());
-        snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), menu_tr("status.vbackup"),
+        mini_snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), menu_tr("status.vbackup"),
                  (unsigned long)(vbackup_cv / 100U), (unsigned long)(vbackup_cv % 100U));
-        snprintf(menu_status_uid, sizeof(menu_status_uid), menu_tr("status.uid"),
+        mini_snprintf(menu_status_uid, sizeof(menu_status_uid), menu_tr("status.uid"),
                  SD3078_ReadID(0), SD3078_ReadID(1), SD3078_ReadID(2), SD3078_ReadID(3),
                  SD3078_ReadID(4), SD3078_ReadID(5), SD3078_ReadID(6), SD3078_ReadID(7));
     } else {
-        snprintf(menu_status_time, sizeof(menu_status_time), "--:--:--");
-        snprintf(menu_status_date, sizeof(menu_status_date), "----");
-        snprintf(menu_status_temp, sizeof(menu_status_temp), "Temp: --");
-        snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), "Vbackup: --");
-        snprintf(menu_status_uid, sizeof(menu_status_uid), "ID:0x----------------");
+        mini_snprintf(menu_status_time, sizeof(menu_status_time), "--:--:--");
+        mini_snprintf(menu_status_date, sizeof(menu_status_date), "----");
+        mini_snprintf(menu_status_temp, sizeof(menu_status_temp), "Temp: --");
+        mini_snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), "Vbackup: --");
+        mini_snprintf(menu_status_uid, sizeof(menu_status_uid), "ID:0x----------------");
     }
 }
 

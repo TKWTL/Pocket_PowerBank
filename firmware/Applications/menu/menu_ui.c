@@ -13,8 +13,8 @@
  * 参考来源：滑动切换与 PID 动画参数参考 MiaoUI 的 UI_Animation
  * （https://github.com/JFeng-Z/MiaoUI）；菜单框架整体借用点见 menu.h 文件头"参考来源"。
  */
-#include <stdio.h>
 #include <string.h>
+#include "mini_format.h"
 #include <math.h>
 #include "lvgl.h"
 #include "menu_ui.h"
@@ -172,18 +172,18 @@ static void fmt_item_text(const menu_item_t *it, bool editing, bool selected, ch
     if (!selected) {
         /* 未选中（角落）：所有类型只显示 label（去 Return 的 <、子页/动作的 >、
          * toggle 的选项与数值，避免角落溢出），完整内容仅选中时展示。 */
-        snprintf(buf, len, "%s", it->label ? menu_tr(it->label) : "");
+        mini_snprintf(buf, len, "%s", it->label ? menu_tr(it->label) : "");
         return;
     }
     switch (it->type) {
     case MENU_ITEM_BACK:
-        snprintf(buf, len, "< %s", menu_tr(it->label));
+        mini_snprintf(buf, len, "< %s", menu_tr(it->label));
         break;
     case MENU_ITEM_PAGE:
-        snprintf(buf, len, "%s >", menu_tr(it->label));   /* 子页：> 进入下一级 */
+        mini_snprintf(buf, len, "%s >", menu_tr(it->label));   /* 子页：> 进入下一级 */
         break;
     case MENU_ITEM_ACTION:
-        snprintf(buf, len, "%s !", menu_tr(it->label));   /* 动作：! 立即执行（与子页 > 区分） */
+        mini_snprintf(buf, len, "%s !", menu_tr(it->label));   /* 动作：! 立即执行（与子页 > 区分） */
         break;
     case MENU_ITEM_TOGGLE: {
         /* 选中：显示完整选项（如 "Language: English"）；未选中已在函数开头
@@ -191,7 +191,7 @@ static void fmt_item_text(const menu_item_t *it, bool editing, bool selected, ch
         uint8_t on = it->toggle_ptr ? *it->toggle_ptr : 0;
         const char *txt = on ? (it->toggle_on ? it->toggle_on : "ON")
                              : (it->toggle_off ? it->toggle_off : "OFF");
-        snprintf(buf, len, "%s: %s", menu_tr(it->label), menu_tr(txt));
+        mini_snprintf(buf, len, "%s: %s", menu_tr(it->label), menu_tr(txt));
         break;
     }
     case MENU_ITEM_VALUE:
@@ -199,11 +199,11 @@ static void fmt_item_text(const menu_item_t *it, bool editing, bool selected, ch
         int32_t v = it->value_ptr ? *it->value_ptr : 0;
         if (it->type == MENU_ITEM_ENUM && it->enum_opts && (uint8_t)v < it->enum_count) {
             /* 枚举：显示 "label: 选项文本"（选项经 menu_tr 本地化） */
-            snprintf(buf, len, "%s: %s", menu_tr(it->label), menu_tr(it->enum_opts[v]));
+            mini_snprintf(buf, len, "%s: %s", menu_tr(it->label), menu_tr(it->enum_opts[v]));
         } else if (it->unit) {
-            snprintf(buf, len, "%s: %d %s", menu_tr(it->label), (int)v, menu_tr(it->unit));
+            mini_snprintf(buf, len, "%s: %d %s", menu_tr(it->label), (int)v, menu_tr(it->unit));
         } else {
-            snprintf(buf, len, "%s: %d", menu_tr(it->label), (int)v);
+            mini_snprintf(buf, len, "%s: %d", menu_tr(it->label), (int)v);
         }
         if (editing) {
             size_t l = strlen(buf);
@@ -217,7 +217,7 @@ static void fmt_item_text(const menu_item_t *it, bool editing, bool selected, ch
     }
     case MENU_ITEM_INFO:
     default:
-        snprintf(buf, len, "%s", it->label ? menu_tr(it->label) : "");
+        mini_snprintf(buf, len, "%s", it->label ? menu_tr(it->label) : "");
         break;
     }
 }
@@ -278,6 +278,27 @@ static void corner_set_text(lv_obj_t *lbl, const char *text, uint8_t right_align
     lv_label_set_text(lbl, text ? text : "");
 }
 
+/* 角落 -> 中心的滑入对象使用“可见文本自身宽度”，而不是12字符固定box里的
+ * 左/右对齐。这样 PID 动的是文字本身的几何中心；到终点切换为14字符中心box时，
+ * 文本中心仍在 x=80，不会出现 PREV 偏左 / NEXT 偏右后再跳中的现象。 */
+static void transit_set_text(lv_obj_t *lbl, const char *text)
+{
+    lv_point_t sz;
+    const lv_font_t *font = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+    int32_t max_w = menu_fixed_text_w(lbl, MENU_TEXT_CORNER_CHARS);
+    int32_t w;
+
+    lv_text_get_size(&sz, text ? text : "", font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    w = sz.x;
+    if (w < 1) w = 1;
+    if (w > max_w) w = max_w;
+
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_width(lbl, w);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(lbl, text ? text : "");
+}
+
 /* 中心静止角色。普通状态固定 14 英文字宽并循环滚动。
  * 编辑态是特例：关闭滚动，使用屏幕内容宽静态显示当前值和 "*"。 */
 static void center_set_text(lv_obj_t *lbl, const char *text, uint8_t editing)
@@ -320,16 +341,10 @@ static void pos_prev_corner(lv_obj_t *lbl)
     lv_obj_set_pos(lbl, MENU_CORNER_X, MENU_ROW_TOP_Y);
 }
 
-/* 图标页顶部 hint 不参与六个条目的角色交换，保持独立的自然宽度逻辑。 */
-static void icon_hint_fit_box(lv_obj_t *lbl)
-{
-    lv_point_t sz;
-    const lv_font_t *font = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
-    const char *text = lv_label_get_text(lbl);
-
-    lv_text_get_size(&sz, text ? text : "", font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_obj_set_width(lbl, (sz.x > MENU_SCR_W) ? MENU_SCR_W : ((sz.x > 0) ? sz.x : 1));
-}
+/* 图标页标题使用固定安全宽度，不再用 DOTS + 动态 box。
+ * 根页标题最长仅 Settings；固定 100px 与右侧时钟互不重叠，也避免 LVGL
+ * 在连续 set_text/set_width 时沿用旧 DOTS 状态导致 "S..." / 全部 "..."。 */
+#define MENU_ICON_HINT_W 100
 
 /* ---------- 条目配色（必须定义在所有使用它的函数之前） ----------
  * 三种角色，各一个函数，互不复用（曾经复用导致过一次"角落也变白"的连锁错误）：
@@ -518,8 +533,8 @@ static void slide_start(int8_t dir)
      * 完整格式长文本在角落/过渡位置会与滑出项重叠成"影子"；
      * 到位后由 slide_commit_* 换成完整格式并高亮） */
     fmt_item_text(it, st->editing, false, buf, sizeof(buf));
-    /* 动画中的新当前项也按角落规则显示：NEXT 从右下角来，PREV 从左上角来。 */
-    corner_set_text(s_item_in, buf, (dir > 0) ? 1U : 0U);
+    /* 滑入中心的文字按自身可见宽度运动；不再继承角落box的左右对齐。 */
+    transit_set_text(s_item_in, buf);
     lv_obj_remove_flag(s_item_in, LV_OBJ_FLAG_HIDDEN);
     lv_obj_update_layout(s_item_in);
     in_w = lv_obj_get_width(s_item_in);
@@ -818,7 +833,7 @@ static void apply_theme(const menu_page_t *pg, uint8_t index)
     lv_obj_set_style_text_font(s_icon_hint,  menu_font_small(), 0);
     lv_obj_set_style_text_font(s_icon_clock, menu_font_small(), 0);
     for (i = 0; i < 3U; i++) {
-        lv_obj_set_style_text_font(s_word_line[i], menu_font_small(), 0);
+        lv_obj_set_style_text_font(s_word_line[i], menu_font_main(), 0);
         lv_obj_set_style_text_color(s_word_line[i], t->text, 0);
     }
     /* 主题色（primary，可改）：菜单名称与页码，使 Color 切换可见 */
@@ -915,7 +930,7 @@ static void icon_clock_tick(lv_timer_t *t)
         return;
     }
     /* 时间镜像由 load_task 周期更新，UI 只读，不访问 I2C */
-    snprintf(buf, sizeof(buf), "%02d:%02d", SD3078_ReadHour(), SD3078_ReadMin());
+    mini_snprintf(buf, sizeof(buf), "%02d:%02d", SD3078_ReadHour(), SD3078_ReadMin());
     lv_label_set_text(s_icon_clock, buf);
 }
 
@@ -948,7 +963,6 @@ static void icon_redraw(const menu_state_t *st, const menu_page_t *pg)
     {
         const menu_icon_t *mi = &pg->icons[st->index];
         lv_label_set_text(s_icon_hint, (mi && mi->label) ? menu_tr(mi->label) : "");
-        icon_hint_fit_box(s_icon_hint);   /* 图标页 hint 独立按自身文本宽度处理 */
     }
 
     /* 刚进入图标页（打开菜单/页面切换）：head_x 定位到保存值，图标直接到位 */
@@ -1187,6 +1201,7 @@ lv_obj_t *menu_ui_create(void)
         lv_obj_set_width(s_word_line[i], 156);
         lv_obj_set_height(s_word_line[i], one_line);
         lv_obj_set_style_pad_all(s_word_line[i], 0, 0);
+        lv_obj_set_style_text_font(s_word_line[i], menu_font_main(), 0);
         lv_obj_set_style_text_align(s_word_line[i], LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(s_word_line[i], LV_LABEL_LONG_MODE_CLIP);
         lv_label_set_text(s_word_line[i], "");
@@ -1196,8 +1211,10 @@ lv_obj_t *menu_ui_create(void)
     /* 图标页顶部文字条（图标下对齐后空出的上方空间，12px 高亮文字） */
     s_icon_hint = lv_label_create(s_scr);
     lv_obj_set_pos(s_icon_hint, 3, ICON_TOP_Y);
+    lv_obj_set_width(s_icon_hint, MENU_ICON_HINT_W);
     lv_obj_set_style_text_font(s_icon_hint, &lv_font_montserrat_12, 0);
-    lv_label_set_long_mode(s_icon_hint, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_text_align(s_icon_hint, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_long_mode(s_icon_hint, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_height(s_icon_hint, one_line);
     lv_label_set_text(s_icon_hint, "");
     lv_obj_add_flag(s_icon_hint, LV_OBJ_FLAG_HIDDEN);
@@ -1335,7 +1352,7 @@ void menu_ui_redraw(void)
         if (st->editing) {
             lv_label_set_text(s_indicator, menu_tr("EDIT"));
         } else {
-            snprintf(buf, sizeof(buf), "%d/%d", (int)st->index + 1,
+            mini_snprintf(buf, sizeof(buf), "%d/%d", (int)st->index + 1,
                      pg ? (int)pg->item_count : 0);
             lv_label_set_text(s_indicator, buf);
         }

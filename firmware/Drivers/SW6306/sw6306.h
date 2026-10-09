@@ -629,6 +629,7 @@ struct SW6306_StatusTypedef
 #define SW6306_DCHG0_PO27W          0x00U//输出最大功率27W
 
 //0x101 SW6306_CTRG_DCHG1           放电配置1
+#define SW6306_DCHG1_MOUT_MSK       0xC0U//多口输出总限流字段
 #define SW6306_DCHG1_MOUT_6A2       0xC0U//多口输出总限流6.2A
 #define SW6306_DCHG1_MOUT_5A2       0x80U//多口输出总限流5.2A
 #define SW6306_DCHG1_MOUT_3A        0x40U//多口输出总限流3.0A

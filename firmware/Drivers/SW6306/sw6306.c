@@ -252,15 +252,16 @@ float SW6306_ReadNTCTemp(void)//读取句柄中的 NTC 温度（°C，Beta 公�
 
 /* 临时放电诊断寄存器 dump。
  * 重点覆盖：
- *  - 0x43/0x44 输出BUS/BAT限流、0x4F/0x51输出功率；
- *  - DCHG1 多口3A限制、DCHG3 BAT限流、DCDC0峰值限流；
- *  - PDFIX/PDPPS的PD档位/电流/PPS恒功率配置；
+ *  - 0x40 FORCECTL、0x43/0x44 输出BUS/BAT限流、0x4F/0x51输出功率；
+ *  - DCHG1 MOUT A/B、DCHG3 BAT限流、DCDC0峰值限流；
+ *  - UFCS 0x12D~0x130 实际广播配置，以及PD/PPS配置；
  *  - 实时/历史故障与保护使能。
  * 一次锁住I2C读取，打印放在解锁之后，避免串口阻塞期间占用总线。 */
 SW6306_RET SW6306_DebugDischargeDump(SW6306_NOARG)
 {
-    uint8_t l[13];
+    uint8_t l[14];
     uint8_t h[20];
+    uint8_t u[4];
     SW6306_FUNC_BEGIN;
     SW6306_MUTEX_TAKE;
 
@@ -274,10 +275,11 @@ SW6306_RET SW6306_DebugDischargeDump(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT1,       &l[6]);
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT2,       &l[7]);
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_FAULT3,       &l[8]);
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG_IBUS,    &l[9]);
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG_IBAT,    &l[10]);
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_POSET,        &l[11]);
-    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_POMAX,        &l[12]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_FORCECTL,      &l[9]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG_IBUS,    &l[10]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG_IBAT,    &l[11]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_POSET,        &l[12]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_STRG_POMAX,        &l[13]);
 
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_DCHG0);
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCHG0,        &h[0]);
@@ -288,6 +290,10 @@ SW6306_RET SW6306_DebugDischargeDump(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCDC0,        &h[5]);
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_DCDC2,        &h[6]);
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PORTQC,       &h[7]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_P_UFCS,       &u[0]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_C_UFCS0,      &u[1]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_C_UFCS1,      &u[2]);
+    SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_C_UFCS2,      &u[3]);
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PD0,          &h[8]);
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PD1,          &h[9]);
     SW6306_SPAWN_ARGS(SW6306_ByteRead, SW6306_CTRG_PD2,          &h[10]);
@@ -306,10 +312,12 @@ SW6306_RET SW6306_DebugDischargeDump(SW6306_NOARG)
     USART_Printf("[SWDBG] %s VBUS=%u IBUS=%u VBAT=%u IBAT=%u\r\n",
                  SW6306_ReadProtocol(), SW6306_ReadVBUS(), SW6306_ReadIBUS(),
                  SW6306_ReadVBAT(), SW6306_ReadIBAT());
-    USART_Printf("[SWDBG] L 0F=%02X 12=%02X 15=%02X 18=%02X 19=%02X 1D=%02X 2A=%02X 2B=%02X 2C=%02X 43=%02X 44=%02X 4F=%02X 51=%02X\r\n",
-                 l[0],l[1],l[2],l[3],l[4],l[5],l[6],l[7],l[8],l[9],l[10],l[11],l[12]);
+    USART_Printf("[SWDBG] L 0F=%02X 12=%02X 15=%02X 18=%02X 19=%02X 1D=%02X 2A=%02X 2B=%02X 2C=%02X 40=%02X 43=%02X 44=%02X 4F=%02X 51=%02X\r\n",
+                 l[0],l[1],l[2],l[3],l[4],l[5],l[6],l[7],l[8],l[9],l[10],l[11],l[12],l[13]);
     USART_Printf("[SWDBG] H 100=%02X 101=%02X 103=%02X 104=%02X 106=%02X 114=%02X 116=%02X 11F=%02X\r\n",
                  h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7]);
+    USART_Printf("[SWDBG] UFCS 12D=%02X 12E=%02X 12F=%02X 130=%02X\r\n",
+                 u[0],u[1],u[2],u[3]);
     USART_Printf("[SWDBG] PD 133=%02X 134=%02X 135=%02X 13E=%02X 13F=%02X 140=%02X 141=%02X 142=%02X 153=%02X 154=%02X 155=%02X 156=%02X\r\n",
                  h[8],h[9],h[10],h[11],h[12],h[13],h[14],h[15],h[16],h[17],h[18],h[19]);
     SW6306_FUNC_END;
@@ -1206,6 +1214,11 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_DCHG4);
     //禁止放电恒温环
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_DCHG0, SW6306_DCHG0_NOCT);
+    /* 临时A/B诊断：芯片默认/当前读回的 DCHG1.MOUT=3.0A 与实际约3A平台高度吻合。
+     * 仅修改[7:6]为6.2A，保留BUS限流偏移/VBUS偏移/线损补偿低6bit不变。
+     * 若IBAT随后能跨过3A，则可确认该字段参与了单口高压放电的限流路径。 */
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_DCHG1,
+                      SW6306_DCHG1_MOUT_MSK, SW6306_DCHG1_MOUT_6A2);
     //放电UVLO 2.8V，0.3V迟滞
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_DCHG4, SW6306_DCHG4_MSK, SW6306_DCHG4_UVLOHYS_V3|SW6306_DCHG4_UVLO_2V8);
     //4.2V电池，2S

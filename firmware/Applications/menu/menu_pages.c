@@ -487,7 +487,7 @@ MENU_PAGE_("PowerBank", menu_page_powerbank, menu_items_powerbank);
  * 只恢复用户设置，不清EFC/SOH/硬件校准等隐藏NVM数据。 */
 static const char * const word_reset[] = {
     "System Reset",
-    "All Settings Will Reset",
+    "Settings Will Reset",
     "CONF:RST OTHER:EXIT",
 };
 MENU_WORD_CONFIRM_(menu_page_reset, word_reset, action_reset_now);

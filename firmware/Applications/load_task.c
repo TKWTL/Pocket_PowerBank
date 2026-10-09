@@ -9,6 +9,14 @@
  */
 #include "applications.h"
 
+/* 延迟复位（实现在 functions/reset.c，声明在 functions/functions.h）。
+ * 这里只做前置声明，不包含 functions.h：后者为 UI 头（lvgl.h + menu.h），
+ * 而本文件属于 Tasks 组、不应耦合 UI 层。
+ * 调用语义：负载任务每 500ms 调用一次；函数内部先判 pending 与 NVM 干净，
+ * 仅当 UI 侧 action_reset_now() 置过 pending 时才真正 nvic_system_reset()，
+ * 因此周期调用是幂等且安全的。 */
+void action_reset_process(void);
+
 /* SD3078 不再维护 initialized flag；应用层只根据每次 API 的 i2c_status_type
  * 决定是否继续使用/重试初始化。 */
 static i2c_status_type s_sd3078_status = I2C_ERR_INTERRUPT;

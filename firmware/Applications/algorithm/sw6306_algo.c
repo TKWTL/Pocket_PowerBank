@@ -121,10 +121,14 @@ void SW6306_AlgoLoadStep(void)
         break;
     default:
         SW6306_PowerLoad();
-        if (++s_capacity_cycle >= 2U) {
-            s_capacity_cycle = 0U;
-            SW6306_CapacityLoad();
-            SW6306_AlgoUpdate();
+        /* IsInitialized()现在是纯RAM查询；芯片独立复位/配置丢失只允许在
+         * fresh PowerLoad之后由ValidateInitialized()判定。 */
+        if (SW6306_ValidateInitialized() != 0U) {
+            if (++s_capacity_cycle >= 2U) {
+                s_capacity_cycle = 0U;
+                SW6306_CapacityLoad();
+                SW6306_AlgoUpdate();
+            }
         }
         break;
     }
@@ -144,7 +148,9 @@ void SW6306_AlgoLoadAll(void)
     SW6306_NTCTempLoad();
     SW6306_PortStatusLoad();
     SW6306_PowerLoad();
-    SW6306_CapacityLoad();
+    if (SW6306_ValidateInitialized() != 0U) {
+        SW6306_CapacityLoad();
+    }
 }
 /************************ SW6306 分层寄存器Load算法结束 ************************/
 

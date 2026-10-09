@@ -1212,24 +1212,29 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_FUNC_END;
 }
     
-uint8_t SW6306_IsInitialized(void)//检测SW6306是否已初始化过，须在SW6306_PowerLoad()后执行
+uint8_t SW6306_IsInitialized(void)
 {
-    /* 判据：initialized 标志 + PowerLoad 读回配置双重校验。
-     *  - initialized==1 且读回匹配 → 正常返回 1；
-     *  - initialized==1 但读回失配 → 芯片被独立复位/配置丢失，失能并返回 0（触发重新 Init）；
-     *  - initialized==0（MCU 复位默认 / 手动失能 / ADCLoad 数据越界 / 曾失配）→ 一律视为
-     *    需重新 Init，返回 0（MCU 复位后 SW6306 走一次重置；手动失能必须真正重新初始化）。 */
-    if(SW6306_Status.initialized == 0)
-        return 0;
-    if((SW6306_Status.pimax_set == SW6306_INPUT_POWER_MAX)&&(SW6306_Status.pomax_set == s_pomax_target))
-        return 1;
-    SW6306_Status.initialized = 0;
-    return 0;
+    /* 纯RAM状态查询，任何任务/算法都可安全调用。
+     * 不再读取/比较PowerLoad镜像，避免在PowerLoad尚未刷新时误把正常芯片判离线。 */
+    return SW6306_Status.initialized ? 1U : 0U;
 }
 
-/* 手动失能已初始化标志（供 UI 调用强制重新初始化）。
- * 置 0 后，下次 SW6306_task 的 IsInitialized 一律判定为失配（返回 0），
- * 触发 ForceOff+Init 重新初始化 SW6306。 */
+uint8_t SW6306_ValidateInitialized(void)
+{
+    /* 必须紧跟fresh SW6306_PowerLoad()调用。
+     * 用PISET/POSET读回检测SW6306独立复位或配置丢失；只有这个入口允许因
+     * 功率配置镜像失配而清initialized。 */
+    if(SW6306_Status.initialized == 0U) return 0U;
+    if((SW6306_Status.pimax_set == SW6306_INPUT_POWER_MAX) &&
+       (SW6306_Status.pomax_set == s_pomax_target)) {
+        return 1U;
+    }
+    SW6306_Status.initialized = 0U;
+    return 0U;
+}
+
+/* 手动失能已初始化标志（供 UI/算法请求强制重新初始化）。
+ * 置 0 后 SW6306_task 会触发 ForceOff+Init。 */
 SW6306_RET SW6306_MarkUninitialized(SW6306_NOARG)
 {
     SW6306_FUNC_BEGIN;

@@ -1445,7 +1445,8 @@ SW6306_RET SW6306_IbusinChargeSet(SW6306_ARGS(uint16_t current));   //设置充�
 SW6306_RET SW6306_IbusForceCtrlSet(SW6306_ARGS(uint8_t status));    //设置是否强制控制端口限流
 //初始化
 SW6306_RET SW6306_Init(SW6306_NOARG);         //初始化，最好系统上电后立刻执行
-uint8_t SW6306_IsInitialized(void);             //检测SW6306是否已初始化过，须在SW6306_PowerLoad()后执行
+uint8_t SW6306_IsInitialized(void);             //纯状态查询：仅返回initialized，不校验PowerLoad镜像
+uint8_t SW6306_ValidateInitialized(void);        //仅在fresh PowerLoad后调用；校验PISET/POSET，失配会清initialized，须在SW6306_PowerLoad()后执行
 SW6306_RET SW6306_MarkUninitialized(SW6306_NOARG); //手动失能已初始化标志（供 UI 调用；是否重新 Init 由读回配置判定）
 
 #ifdef __cplusplus

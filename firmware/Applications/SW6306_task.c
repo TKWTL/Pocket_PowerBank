@@ -73,16 +73,23 @@ void SW6306_task_func(void *pvParameters)
         sw6306_update_sleep_block();
 
         if (dbg_idx == 0U) {
-            USART_Printf("VBUS:%dmV\tIBUS:%dmA\tPBUS:%.3fW\n",
+            uint32_t mw = ((uint32_t)SW6306_ReadVBUS() * SW6306_ReadIBUS() + 500U) / 1000U;
+            USART_Printf("VBUS:%dmV\tIBUS:%dmA\tPBUS:%lu.%03luW\n",
                          SW6306_ReadVBUS(), SW6306_ReadIBUS(),
-                         SW6306_ReadVBUS() * SW6306_ReadIBUS() * 0.000001f);
+                         (unsigned long)(mw / 1000U), (unsigned long)(mw % 1000U));
         } else if (dbg_idx == 1U) {
-            USART_Printf("VBAT:%dmV\tIBAT:%dmA\tPBAT:%.3fW\n",
+            uint32_t mw = ((uint32_t)SW6306_ReadVBAT() * SW6306_ReadIBAT() + 500U) / 1000U;
+            USART_Printf("VBAT:%dmV\tIBAT:%dmA\tPBAT:%lu.%03luW\n",
                          SW6306_ReadVBAT(), SW6306_ReadIBAT(),
-                         SW6306_ReadVBAT() * SW6306_ReadIBAT() * 0.000001f);
+                         (unsigned long)(mw / 1000U), (unsigned long)(mw % 1000U));
         } else if (dbg_idx == 2U) {
-            USART_Printf("TChip:%.1fC\tBatCap:%d%%\tSleep:%lums\n\n",
-                         SW6306_ReadTCHIP(), SW6306_ReadCapacity(), pm_sleep_timer_left_ms());
+            float temp = SW6306_ReadTCHIP();
+            int32_t t10 = (int32_t)(temp * 10.0f + ((temp >= 0.0f) ? 0.5f : -0.5f));
+            uint32_t mag = (uint32_t)((t10 < 0) ? -t10 : t10);
+            USART_Printf("TChip:%s%lu.%luC\tBatCap:%d%%\tSleep:%lums\n\n",
+                         (t10 < 0) ? "-" : "",
+                         (unsigned long)(mag / 10U), (unsigned long)(mag % 10U),
+                         SW6306_ReadCapacity(), pm_sleep_timer_left_ms());
         }
 
         dbg_idx++;

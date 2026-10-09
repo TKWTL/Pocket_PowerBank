@@ -586,7 +586,7 @@
 #define LV_ATTRIBUTE_EXTERN_DATA
 
 /** Use `float` as `lv_value_precise_t` */
-#define LV_USE_FLOAT            1
+#define LV_USE_FLOAT            0
 
 /** Enable matrix support
  *  - Requires `LV_USE_FLOAT = 1` */
@@ -603,7 +603,7 @@
 
 /* Montserrat fonts with ASCII range and some symbols using bpp = 4
  * https://fonts.google.com/specimen/Montserrat */
-#define LV_FONT_MONTSERRAT_8  1
+#define LV_FONT_MONTSERRAT_8  0
 #define LV_FONT_MONTSERRAT_10 0
 #define LV_FONT_MONTSERRAT_12 1
 #define LV_FONT_MONTSERRAT_14 0
@@ -734,7 +734,7 @@
 
 #define LV_USE_BAR        0
 
-#define LV_USE_BUTTON        1
+#define LV_USE_BUTTON        0
 
 #define LV_USE_BUTTONMATRIX  0
 
@@ -769,8 +769,8 @@
 
 #define LV_USE_LABEL      1
 #if LV_USE_LABEL
-    #define LV_LABEL_TEXT_SELECTION 1   /**< Enable selecting text of the label */
-    #define LV_LABEL_LONG_TXT_HINT 1    /**< Store some extra info in labels to speed up drawing of very long text */
+    #define LV_LABEL_TEXT_SELECTION 0   /**< No label text selection in this UI */
+    #define LV_LABEL_LONG_TXT_HINT 0    /**< All labels are short; save code/RAM */
     #define LV_LABEL_WAIT_CHAR_COUNT 3  /**< The count of wait chart */
 #endif
 
@@ -784,7 +784,7 @@
 
 #define LV_USE_MENU       0
 
-#define LV_USE_MSGBOX     1
+#define LV_USE_MSGBOX     0
 
 #define LV_USE_ROLLER     0   /**< Requires: lv_label */
 
@@ -849,7 +849,7 @@
 /* Documentation for layouts can be found here: https://docs.lvgl.io/master/details/common-widget-features/layouts/index.html . */
 
 /** A layout similar to Flexbox in CSS. */
-#define LV_USE_FLEX 1
+#define LV_USE_FLEX 0
 
 /** A layout similar to Grid in CSS. */
 #define LV_USE_GRID 0

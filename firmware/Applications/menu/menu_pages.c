@@ -52,25 +52,25 @@ static const menu_tr_t menu_tr_table[] = {
     { "Accelerator",     "Accelerator",       "加速度" },
     { "Timer",           "Timer",             "时钟" },
     /* Status → Battery */
-    { "status.bat",      "%.2fV %.3fA",       "%.2fV %.3fA" },
-    { "status.maxcap",   "Max: %.2f Wh",      "最大能量: %.2f Wh" },
-    { "status.now",      "Now: %.2f Wh",      "当前能量: %.2f Wh" },
-    { "status.health",   "Health: %.0f%%",    "健康度: %.0f%%" },
-    { "status.cycles",   "Cycles: %.2f",      "循环: %.2f" },
+    { "status.bat",      "%lu.%02luV %lu.%03luA",      "%lu.%02luV %lu.%03luA" },
+    { "status.maxcap",   "Max: %lu.%02lu Wh",          "最大能量: %lu.%02lu Wh" },
+    { "status.now",      "Now: %lu.%02lu Wh",          "当前能量: %lu.%02lu Wh" },
+    { "status.health",   "Health: %lu%%",              "健康度: %lu%%" },
+    { "status.cycles",   "Cycles: %lu.%02lu",          "循环: %lu.%02lu" },
     { "status.learn",    "Learn:%s",          "容量学习:%s" },
     { "learn.waiting",   "Waiting",           "等待" },
     { "learn.ing",       "Learning",          "学习中" },
     { "learn.done",      "Done",              "已完成" },
     { "learn.unknown",   "Unknown",           "未知" },
     /* Status → Accelerator */
-    { "status.accel_x",  "X: %.2f g",        "X轴: %.2f g" },
-    { "status.accel_y",  "Y: %.2f g",        "Y轴: %.2f g" },
-    { "status.accel_z",  "Z: %.2f g",        "Z轴: %.2f g" },
+    { "status.accel_x",  "X: %s%lu.%02lu g",  "X轴: %s%lu.%02lu g" },
+    { "status.accel_y",  "Y: %s%lu.%02lu g",  "Y轴: %s%lu.%02lu g" },
+    { "status.accel_z",  "Z: %s%lu.%02lu g",  "Z轴: %s%lu.%02lu g" },
     /* Status → Timer */
     { "status.time",     "%02d:%02d:%02d",   "%02d:%02d:%02d" },
     { "status.date",     "20%02d-%02d-%02d", "20%02d-%02d-%02d" },
     { "status.temp",     "Temp: %d°C",       "温度: %d°C" },
-    { "status.vbackup",  "Vbackup: %.2fV",   "备用电池: %.2fV" },
+    { "status.vbackup",  "Vbackup: %lu.%02luV",   "备用电池: %lu.%02luV" },
     { "status.uid",      "ID:0x%02X%02X%02X%02X%02X%02X%02X%02X",
                          "ID:0x%02X%02X%02X%02X%02X%02X%02X%02X" },
     /* ---- Tools 页 ---- */
@@ -590,25 +590,36 @@ MENU_PAGE_("Status", menu_page_status, menu_items_status);
  * 全部只读驱动/算法RAM镜像，不在UI线程发起I2C。 */
 void menu_status_refresh(void)
 {
-    /* ---- Battery：电压/电流、最大容量、当前容量、健康度、学习状态 ---- */
+    /* ---- Battery：全整数字符串格式，避免链接printf浮点转换代码 ---- */
     if (SW6306_IsInitialized()) {
-        /* 容量/库仑计镜像由 SW6306_task 周期更新（CapacityLoad），UI 只读镜像，勿在此 load */
+        uint32_t vbat_cv = ((uint32_t)SW6306_ReadVBAT() + 5U) / 10U;
+        uint32_t ibat_ma = SW6306_ReadIBAT();
+        uint32_t max_cwh = (uint32_t)(SW6306_ReadMaxEnergy_mWh() * 0.1f + 0.5f);
+        uint32_t now_cwh = (uint32_t)(SW6306_ReadRemainEnergy_mWh() * 0.1f + 0.5f);
+
         snprintf(menu_status_bat, sizeof(menu_status_bat), menu_tr("status.bat"),
-                 SW6306_ReadVBAT() * 0.001f, SW6306_ReadIBAT() * 0.001f);
+                 (unsigned long)(vbat_cv / 100U), (unsigned long)(vbat_cv % 100U),
+                 (unsigned long)(ibat_ma / 1000U), (unsigned long)(ibat_ma % 1000U));
         snprintf(menu_status_maxcap, sizeof(menu_status_maxcap), menu_tr("status.maxcap"),
-                 SW6306_ReadMaxEnergy_mWh() / 1000.0f);
+                 (unsigned long)(max_cwh / 100U), (unsigned long)(max_cwh % 100U));
         snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), menu_tr("status.now"),
-                 SW6306_ReadRemainEnergy_mWh() / 1000.0f);
+                 (unsigned long)(now_cwh / 100U), (unsigned long)(now_cwh % 100U));
+
         if (nvm_is_valid()) {
+            float soh = SW6306_AlgoGetSOHPercent();
+            float efc = SW6306_AlgoGetEquivalentCycles();
+            uint32_t soh_i = (soh > 0.0f) ? (uint32_t)(soh + 0.5f) : 0U;
+            uint32_t efc_centi = (efc > 0.0f) ? (uint32_t)(efc * 100.0f + 0.5f) : 0U;
+
             snprintf(menu_status_health, sizeof(menu_status_health), menu_tr("status.health"),
-                     SW6306_AlgoGetSOHPercent());
+                     (unsigned long)soh_i);
             snprintf(menu_status_cycles, sizeof(menu_status_cycles), menu_tr("status.cycles"),
-                     SW6306_AlgoGetEquivalentCycles());
+                     (unsigned long)(efc_centi / 100U), (unsigned long)(efc_centi % 100U));
         } else {
             snprintf(menu_status_health, sizeof(menu_status_health), "--");
             snprintf(menu_status_cycles, sizeof(menu_status_cycles), "--");
         }
-        /* 容量学习状态：0xA2 两位（bit5=END 高位 / bit6=ING 低位）→ 3 态 + Unknown */
+
         {
             sw6306_learn_state_t ls = SW6306_ReadLearnState();
             const char *st;
@@ -621,32 +632,41 @@ void menu_status_refresh(void)
             snprintf(menu_status_learn, sizeof(menu_status_learn), menu_tr("status.learn"), st);
         }
     } else {
-        snprintf(menu_status_bat,       sizeof(menu_status_bat),       "--");
-        snprintf(menu_status_maxcap,    sizeof(menu_status_maxcap),    "--");
-        snprintf(menu_status_presentcap,sizeof(menu_status_presentcap),"--");
-        snprintf(menu_status_health,    sizeof(menu_status_health),    "--");
-        snprintf(menu_status_cycles,    sizeof(menu_status_cycles),    "--");
-        snprintf(menu_status_learn,     sizeof(menu_status_learn),     "--");
+        snprintf(menu_status_bat,        sizeof(menu_status_bat),        "--");
+        snprintf(menu_status_maxcap,     sizeof(menu_status_maxcap),     "--");
+        snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), "--");
+        snprintf(menu_status_health,     sizeof(menu_status_health),     "--");
+        snprintf(menu_status_cycles,     sizeof(menu_status_cycles),     "--");
+        snprintf(menu_status_learn,      sizeof(menu_status_learn),      "--");
     }
 
-    /* ---- Accelerator：三轴加速度（读 SC7A20 驱动句柄镜像，mg → g） ---- */
+    /* ---- Accelerator：mg直接换算为0.01g整数，再格式化 ---- */
     if (SC7A20_IsInitialized()) {
-        snprintf(menu_status_accel_x, sizeof(menu_status_accel_x), menu_tr("status.accel_x"),
-                 SC7A20_ReadX_mg() / 1000.0f);
-        snprintf(menu_status_accel_y, sizeof(menu_status_accel_y), menu_tr("status.accel_y"),
-                 SC7A20_ReadY_mg() / 1000.0f);
-        snprintf(menu_status_accel_z, sizeof(menu_status_accel_z), menu_tr("status.accel_z"),
-                 SC7A20_ReadZ_mg() / 1000.0f);
+        float mg[3] = { SC7A20_ReadX_mg(), SC7A20_ReadY_mg(), SC7A20_ReadZ_mg() };
+        char *dst[3] = { menu_status_accel_x, menu_status_accel_y, menu_status_accel_z };
+        size_t len[3] = { sizeof(menu_status_accel_x), sizeof(menu_status_accel_y), sizeof(menu_status_accel_z) };
+        const char *key[3] = { "status.accel_x", "status.accel_y", "status.accel_z" };
+        uint8_t i;
+
+        for (i = 0U; i < 3U; i++) {
+            int32_t cg = (int32_t)(mg[i] * 0.1f + ((mg[i] >= 0.0f) ? 0.5f : -0.5f));
+            uint32_t mag = (uint32_t)((cg < 0) ? -cg : cg);
+            snprintf(dst[i], len[i], menu_tr(key[i]),
+                     (cg < 0) ? "-" : "",
+                     (unsigned long)(mag / 100U), (unsigned long)(mag % 100U));
+        }
     } else {
         snprintf(menu_status_accel_x, sizeof(menu_status_accel_x), "X: --");
         snprintf(menu_status_accel_y, sizeof(menu_status_accel_y), "Y: --");
         snprintf(menu_status_accel_z, sizeof(menu_status_accel_z), "Z: --");
     }
 
-    /* ---- Timer：时分秒、年月日、温度、备用电池电压、UID（读 SD3078 驱动句柄镜像） ---- */
+    /* ---- Timer ---- */
     if (SD3078_ReadMonth() >= 1U && SD3078_ReadMonth() <= 12U &&
         SD3078_ReadDay() >= 1U && SD3078_ReadDay() <= 31U &&
         SD3078_ReadHour() <= 23U && SD3078_ReadMin() <= 59U && SD3078_ReadSec() <= 59U) {
+        uint32_t vbackup_cv = ((uint32_t)SD3078_ReadBatt() + 5U) / 10U;
+
         snprintf(menu_status_time, sizeof(menu_status_time), menu_tr("status.time"),
                  SD3078_ReadHour(), SD3078_ReadMin(), SD3078_ReadSec());
         snprintf(menu_status_date, sizeof(menu_status_date), menu_tr("status.date"),
@@ -654,9 +674,7 @@ void menu_status_refresh(void)
         snprintf(menu_status_temp, sizeof(menu_status_temp), menu_tr("status.temp"),
                  (int)SD3078_ReadTemp());
         snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), menu_tr("status.vbackup"),
-                 SD3078_ReadBatt() / 1000.0f);
-        /* UID：0x72~0x79 共 8 字节 → "ID:0x" + 16 个十六进制字符。
-         * 格式串放在 i18n 表（status.uid），中英一致。 */
+                 (unsigned long)(vbackup_cv / 100U), (unsigned long)(vbackup_cv % 100U));
         snprintf(menu_status_uid, sizeof(menu_status_uid), menu_tr("status.uid"),
                  SD3078_ReadID(0), SD3078_ReadID(1), SD3078_ReadID(2), SD3078_ReadID(3),
                  SD3078_ReadID(4), SD3078_ReadID(5), SD3078_ReadID(6), SD3078_ReadID(7));

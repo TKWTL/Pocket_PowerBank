@@ -21,7 +21,7 @@ static lv_obj_t *s_bat_tab;  /* 电量条-电极（相对x1..3=绝对121..123，
 static lv_obj_t *s_bat_pct;  /* 电池内电量百分比 label */
 static lv_obj_t *s_bat_img;  /* 电池位图（随箭头显隐自动移动） */
 static int32_t s_bat_x = 72; /* 电池 x 基准：箭头显示 72 / 隐藏 67（对准箭头+电池整体中心 86.5） */
-static float s_bar_pct = 0.0f;  /* 电量条显示值（独立于实际电量）：空闲=实际，充电=0→实际循环 */
+static uint16_t s_bar_tenth; /* 电量条显示值0.1%，空闲=实际，充电=0→实际循环 */
 
 static void icon_update(void);   /* 前向声明（power_label_update 在电池自动移动时调用） */
 static lv_timer_t *s_tmr_port;   /* 端口状态刷新（destroy 须删，防回调访问已删对象） */
@@ -80,17 +80,23 @@ static void port_timer_cb(lv_timer_t *t)
 /* 功率标签立即刷新（create 时调用一次）。方向指示 <>/ 放在功率框外（s_dir_label） */
 static void power_label_update(lv_obj_t *label)
 {
+    uint16_t ibus = SW6306_ReadIBUS();
+    uint32_t uw = (uint32_t)SW6306_ReadVBUS() * ibus; /* mV*mA = uW */
+    uint32_t centiw;
+
     lv_obj_set_style_text_font(label, menu_font_main(), 0);
     static char buf[10];
-    uint16_t ibus = SW6306_ReadIBUS();
-    float w = (float)SW6306_ReadVBUS() * (float)ibus * 0.000001f;   /* mV*mA -> W */
-    if (ibus < 5) w = 0.0f;   /* 电流 < 0.005A 视为 0，消除静止时的噪声功率 */
-    snprintf(buf, sizeof(buf), "%05.2fW", w);   /* 功率本身不带方向 */
+
+    if (ibus < 5U) uw = 0U;
+    centiw = (uw + 5000U) / 10000U; /* 0.01W，四舍五入 */
+    snprintf(buf, sizeof(buf), "%02lu.%02luW",
+             (unsigned long)(centiw / 100U),
+             (unsigned long)(centiw % 100U));
     lv_label_set_text_static(label, buf);
 
     /* 方向指示（框外）：< 放电 / > 充电，读 REG0x18 镜像；无功率留空 */
     if (s_dir_label) {
-        if (w > 0.0f) {
+        if (uw != 0U) {
             static char dbuf[2];
             dbuf[0] = SW6306_IsDischarging() ? '<' : '>';
             dbuf[1] = '\0';
@@ -100,13 +106,13 @@ static void power_label_update(lv_obj_t *label)
         }
         /* 电池框自动移动：箭头显示时保持 x=72；隐藏时中心对准
          * 箭头+电池整体中心（62..111 中心 86.5）→ x=67 */
-        int32_t new_x = (w > 0.0f) ? 72 : 67;
+        int32_t new_x = (uw != 0U) ? 72 : 67;
         if (new_x != s_bat_x) {
             s_bat_x = new_x;
             if (s_bat_img) {
                 lv_obj_set_pos(s_bat_img, s_bat_x, 23);
             }
-            icon_update();   /* 电量条/电极跟随新基准 */
+            icon_update();
         }
     }
 }
@@ -117,12 +123,16 @@ static void power_timer_cb(lv_timer_t *t)
     lv_obj_invalidate(s_main_scr);   /* 强制整屏重绘，清除 label 文字残影/格点 */
 }
 
-/* 接口电压标签立即刷新（%5.2fV，如 12.00V；读 VBUS 镜像） */
+/* 接口电压标签立即刷新（0.01V，如 12.00V；全整数格式，避免拉入printf浮点转换） */
 static void voltage_label_update(lv_obj_t *label)
 {
-    lv_obj_set_style_text_font(label, menu_font_main(), 0);
+    uint32_t cv = ((uint32_t)SW6306_ReadVBUS() + 5U) / 10U;
     static char buf[8];
-    snprintf(buf, sizeof(buf), "%05.2fV", SW6306_ReadVBUS() * 0.001f);
+
+    lv_obj_set_style_text_font(label, menu_font_main(), 0);
+    snprintf(buf, sizeof(buf), "%02lu.%02luV",
+             (unsigned long)(cv / 100U),
+             (unsigned long)(cv % 100U));
     lv_label_set_text_static(label, buf);
 }
 
@@ -133,27 +143,23 @@ static void voltage_timer_cb(lv_timer_t *t)
 }
 
 /* 电池百分比 + 电量条立即刷新（create 时调用一次）。
- * 电量条显示值 s_bar_pct：空闲=实际电量；充电=0→实际电量循环（速度 100%/3s，
- * 每 500ms 步进 16.67%），电量条长度与颜色由 s_bar_pct 决定，电量% 文字仍用实际电量。 */
+ * 电量条动画用0.1%整数保存；500ms每次+16.7%，约3s扫满100%。 */
 static void icon_update(void)
 {
     static char buf[8];
 
-    /* 充电动画值更新 */
     if (SW6306_IsCharging()) {
-        uint8_t real = SW6306_ReadCapacity();
-        s_bar_pct += (100.0f / 3.0f) * 0.5f;   /* 500ms 步进：每秒 33.33% */
-        if (s_bar_pct >= (float)real) {
-            s_bar_pct = 0.0f;   /* 达到实际电量 → 归零循环 */
-        }
+        uint16_t real_tenth = (uint16_t)SW6306_ReadCapacity() * 10U;
+        s_bar_tenth = (uint16_t)(s_bar_tenth + 167U);
+        if (s_bar_tenth >= real_tenth) s_bar_tenth = 0U;
     } else {
-        s_bar_pct = (float)SW6306_ReadCapacity();   /* 空闲跟随实际电量 */
+        s_bar_tenth = (uint16_t)SW6306_ReadCapacity() * 10U;
     }
 
     /* 电量条：拆为主体系(35px,x=124..158,高14) + 电极(x=121..123,3px,仅电极行高6)，
      * 避免电极段在非电极行漏到图片外；≥30%绿 / ≥10%黄(DFDF00) / 其余红 */
     {
-        uint8_t pct = (uint8_t)s_bar_pct;
+        uint8_t pct = (uint8_t)(s_bar_tenth / 10U);
         int32_t fill = (int32_t)(38 * pct / 100);   /* 总长38 = 主体系35 + 电极3 */
         if (fill < 0) fill = 0;
         if (fill > 38) fill = 38;
@@ -197,10 +203,19 @@ static void icon_update(void)
         }
     }
 
-    /* NTC 温度：SW6306_task 周期更新的镜像句柄（UI 只读）；独立缓冲避免覆盖 % 文本 */
-    static char tbuf[10];
-    snprintf(tbuf, sizeof(tbuf), "%04.1f°C", SW6306_ReadNTCTemp());   /* 一位小数 */
-    lv_label_set_text_static(s_temp_label, tbuf);
+    /* NTC 温度：仅用整数格式化，避免printf浮点转换代码。 */
+    {
+        float temp = SW6306_ReadNTCTemp();
+        int32_t t10 = (int32_t)(temp * 10.0f + ((temp >= 0.0f) ? 0.5f : -0.5f));
+        uint32_t mag = (uint32_t)((t10 < 0) ? -t10 : t10);
+        static char tbuf[10];
+
+        snprintf(tbuf, sizeof(tbuf), "%s%lu.%lu°C",
+                 (t10 < 0) ? "-" : "",
+                 (unsigned long)(mag / 10U),
+                 (unsigned long)(mag % 10U));
+        lv_label_set_text_static(s_temp_label, tbuf);
+    }
 
     /* 时间 HH:MM：load_task 更新的 SD3078 镜像（UI 只读），独立缓冲；
      * 走秒提示：秒为奇数时冒号显示为空格（闪烁），等宽保持宽度不变 */
@@ -291,7 +306,7 @@ static void main_screen_create(void)
     lv_obj_set_pos(s_dir_label, 62, 23);
     lv_label_set_text_static(s_dir_label, "");
 
-    /* 接口电压框（绿色）：第一行中间，%5.2fV（最大 6 字符 = 48px，框宽 52），左移1px */
+    /* 接口电压框（绿色）：第一行中间，xx.xxV（最大 6 字符 = 48px，框宽 52），左移1px */
     lv_obj_t *frame_v = lv_obj_create(s_main_scr);
     lv_obj_set_size(frame_v, 52, 17);
     lv_obj_set_pos(frame_v, 64, 2);

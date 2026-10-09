@@ -41,7 +41,6 @@ void SW6306_task_func(void *pvParameters)
     (void)pvParameters;
     uint8_t dbg_idx = 0U;
     uint8_t service_div = 0U;
-    uint8_t discharge_dbg_div = 0U;
 
     /* 算法层持有Load相位、容量1s分频和业务状态；任务只提供100ms调度节拍。 */
     SW6306_AlgoInit();
@@ -72,17 +71,6 @@ void SW6306_task_func(void *pvParameters)
         service_div = 0U;
 
         sw6306_update_sleep_block();
-
-        /* 临时：每约5s、仅在实际放电时读取关键配置/状态寄存器，排查 PDFIX/PDPPS
-         * 均出现电池端约3A平台的原因。诊断完成后删除此块即可。 */
-        if (SW6306_IsDischarging()) {
-            if (++discharge_dbg_div >= 10U) {
-                discharge_dbg_div = 0U;
-                SW6306_DebugDischargeDump();
-            }
-        } else {
-            discharge_dbg_div = 0U;
-        }
 
         if (dbg_idx == 0U) {
             uint32_t mw = ((uint32_t)SW6306_ReadVBUS() * SW6306_ReadIBUS() + 500U) / 1000U;

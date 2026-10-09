@@ -629,7 +629,6 @@ struct SW6306_StatusTypedef
 #define SW6306_DCHG0_PO27W          0x00U//输出最大功率27W
 
 //0x101 SW6306_CTRG_DCHG1           放电配置1
-#define SW6306_DCHG1_MOUT_MSK       0xC0U//多口输出总限流字段
 #define SW6306_DCHG1_MOUT_6A2       0xC0U//多口输出总限流6.2A
 #define SW6306_DCHG1_MOUT_5A2       0x80U//多口输出总限流5.2A
 #define SW6306_DCHG1_MOUT_3A        0x40U//多口输出总限流3.0A
@@ -934,7 +933,7 @@ struct SW6306_StatusTypedef
 #define SW6306_CHG12_CT_6C          0x00U//芯片充电恒温环阈值60°C
 
 //0x114 SW6306_CTRG_DCDC0           BUCK-BOOST变换器设置0
-#define SW6306_DCDC0_MSK            0xC0U//BUCK-BOOST变换器设置0寄存器有效位
+#define SW6306_DCDC0_MSK            0xFCU//BUCK-BOOST设置0有效位：频率[7:6]/峰值限流[5:4]/过温[3:2]
 #define SW6306_DCDC0_F500K          0xC0U//开关频率500K
 #define SW6306_DCDC0_F400K          0x80U//开关频率400K
 #define SW6306_DCDC0_F200K          0x40U//开关频率200K
@@ -1366,8 +1365,6 @@ uint8_t SW6306_ReadEventFlags(void);            //读取REG0x15原始事件值
 uint8_t SW6306_ReadFaultDischarge(void);        //读取REG0x2A放电异常历史原因
 uint8_t SW6306_ReadFaultCharge(void);           //读取REG0x2B充电异常历史原因
 uint8_t SW6306_ReadSystemStatus(void);          //读取REG0x18系统实时状态
-/* 临时放电诊断：读取并打印关键限流/协议/保护寄存器。排查完成后可删除调用。 */
-SW6306_RET SW6306_DebugDischargeDump(SW6306_NOARG);
 //端口状态相关操作
 SW6306_RET SW6306_PortStatusLoad(SW6306_NOARG); //更新端口状态镜像寄存器(0x13,0x18,0x19,0x1C,0x1D)
 uint8_t SW6306_IsPortC1ON(void);                //读取C1口通路是否打开

@@ -99,9 +99,7 @@ void pm_controller_refresh_idle(pm_controller_t *ctx)
     /* 有外部活动 → UI 应重新激活 */
     ctx->ui_active = 1;
     ctx->wake_latched = 1;
-    if (ctx->idle_timer_paused == 0) {
-        pm_sleep_timer_refresh();
-    }
+    pm_sleep_timer_refresh();
 }
 
 void pm_controller_pause_idle(pm_controller_t *ctx)
@@ -110,7 +108,10 @@ void pm_controller_pause_idle(pm_controller_t *ctx)
         return;
     }
 
-    ctx->idle_timer_paused = 1;
+    if (ctx->idle_timer_paused == 0) {
+        pm_sleep_timer_pause();
+        ctx->idle_timer_paused = 1;
+    }
 }
 
 void pm_controller_resume_idle(pm_controller_t *ctx)
@@ -119,12 +120,13 @@ void pm_controller_resume_idle(pm_controller_t *ctx)
         return;
     }
 
-    ctx->idle_timer_paused = 0;
-    /* 活动（充电/放电阻塞）结束后刷新空闲计时：
-     * 否则阻塞期间 deadline 已过，解除阻塞会立即识别超时入睡，
-     * 导致充电/放电一停就睡、LPSet 切断输出、唤醒后功率跌落。
-     * 注意：本函数仅在 block 解除的转换瞬间被调用一次，不会阻止正常休眠。 */
-    pm_sleep_timer_refresh();
+    if (ctx->idle_timer_paused != 0) {
+        /* 常亮期间 timer 本身被冻结；解除后从冻结值继续。
+         * 充/放电活跃时 refresh 请求会把冻结值保持在完整 timeout，
+         * 因而充电结束不会立刻黑屏，而会重新走完整空闲等待。 */
+        pm_sleep_timer_resume();
+        ctx->idle_timer_paused = 0;
+    }
 }
 
 void pm_controller_notify_wake(pm_controller_t *ctx)

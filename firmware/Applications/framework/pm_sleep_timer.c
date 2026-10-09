@@ -4,8 +4,10 @@
 #include "task.h"
 
 static TickType_t s_deadline;
+static TickType_t s_pause_left;
 static uint32_t s_timeout_ms;
 static volatile uint8_t s_countdown_disabled;   /* 1=停止倒计时（不休眠）：expired 恒 0 */
+static volatile uint8_t s_countdown_paused;     /* 1=常亮阻塞：冻结剩余倒计时 */
 static volatile uint8_t s_force_sleep;          /* 1=立刻休眠：expired 恒 1；进入休眠分支后清除 */
 
 static TickType_t pm_to_ticks(uint32_t ms)
@@ -23,16 +25,24 @@ void pm_sleep_timer_init(uint32_t timeout_ms)
 {
     s_timeout_ms = timeout_ms;
     s_countdown_disabled = 0;
+    s_countdown_paused = 0;
     s_force_sleep = 0;
+    s_pause_left = 0;
     s_deadline = xTaskGetTickCount() + pm_to_ticks(timeout_ms);
 }
 
 void pm_sleep_timer_set(uint32_t timeout_ms)
 {
+    TickType_t ticks = pm_to_ticks(timeout_ms);
+
     taskENTER_CRITICAL();
     s_timeout_ms = timeout_ms;
-    s_countdown_disabled = 0;   /* 显式设置超时 → 恢复倒计时 */
-    s_deadline = xTaskGetTickCount() + pm_to_ticks(timeout_ms);
+    s_countdown_disabled = 0;
+    if (s_countdown_paused != 0) {
+        s_pause_left = ticks;   /* 常亮期间改超时：继续暂停，并采用新的完整倒计时 */
+    } else {
+        s_deadline = xTaskGetTickCount() + ticks;
+    }
     taskEXIT_CRITICAL();
 }
 
@@ -47,9 +57,38 @@ void pm_sleep_timer_disable(void)
 
 void pm_sleep_timer_refresh(void)
 {
+    TickType_t ticks = pm_to_ticks(s_timeout_ms);
+
     taskENTER_CRITICAL();
-    /* 无条件重载倒计时：disabled 由 expired()/left_ms() 短路保证不超时，无需在此判断 */
-    s_deadline = xTaskGetTickCount() + pm_to_ticks(s_timeout_ms);
+    /* 常亮阻塞期间的活动只重载“冻结值”，不让倒计时偷偷流逝。 */
+    if (s_countdown_paused != 0) {
+        s_pause_left = ticks;
+    } else {
+        s_deadline = xTaskGetTickCount() + ticks;
+    }
+    taskEXIT_CRITICAL();
+}
+
+void pm_sleep_timer_pause(void)
+{
+    TickType_t now;
+
+    taskENTER_CRITICAL();
+    if (s_countdown_paused == 0) {
+        now = xTaskGetTickCount();
+        s_pause_left = (now >= s_deadline) ? 0 : (s_deadline - now);
+        s_countdown_paused = 1;
+    }
+    taskEXIT_CRITICAL();
+}
+
+void pm_sleep_timer_resume(void)
+{
+    taskENTER_CRITICAL();
+    if (s_countdown_paused != 0) {
+        s_deadline = xTaskGetTickCount() + s_pause_left;
+        s_countdown_paused = 0;
+    }
     taskEXIT_CRITICAL();
 }
 
@@ -78,6 +117,9 @@ uint32_t pm_sleep_timer_left_ms(void)
     if (s_countdown_disabled != 0) {
         return PM_SLEEP_INFINITE;   /* 停止倒计时：剩余视为无限 */
     }
+    if (s_countdown_paused != 0) {
+        return (uint32_t)(s_pause_left * portTICK_PERIOD_MS);
+    }
 
     now = xTaskGetTickCount();
     if (now >= s_deadline) {
@@ -95,6 +137,9 @@ uint8_t pm_sleep_timer_expired(void)
     }
     if (s_countdown_disabled != 0) {
         return 0;               /* 停止倒计时：永不超时 */
+    }
+    if (s_countdown_paused != 0) {
+        return 0;               /* 常亮要求：冻结倒计时，不允许自动休眠 */
     }
     return (xTaskGetTickCount() >= s_deadline) ? 1 : 0;
 }

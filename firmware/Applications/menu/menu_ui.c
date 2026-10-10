@@ -923,7 +923,7 @@ static void icon_apply_positions(const menu_state_t *st, uint8_t n)
 }
 
 /* 顶部时间指示：1s 周期刷新。SD3078 不再维护初始化 flag；
- * UI 只读取 load_task 已更新的镜像，镜像不合法时显示 --:--。 */
+ * UI 只读load_task已更新的镜像；无效时先隐藏，避免首次渲染闪 --:--。 */
 static void icon_clock_tick(lv_timer_t *t)
 {
     char buf[8];
@@ -934,12 +934,13 @@ static void icon_clock_tick(lv_timer_t *t)
     /* 驱动不再提供 initialized flag：用时间镜像本身的合法范围判断是否已有有效数据。 */
     if (SD3078_ReadMonth() < 1U || SD3078_ReadMonth() > 12U ||
         SD3078_ReadHour() > 23U || SD3078_ReadMin() > 59U) {
-        lv_label_set_text(s_icon_clock, "--:--");
+        lv_obj_add_flag(s_icon_clock, LV_OBJ_FLAG_HIDDEN);
         return;
     }
     /* 时间镜像由 load_task 周期更新，UI 只读，不访问 I2C */
     mini_snprintf(buf, sizeof(buf), "%02d:%02d", SD3078_ReadHour(), SD3078_ReadMin());
     lv_label_set_text(s_icon_clock, buf);
+    lv_obj_remove_flag(s_icon_clock, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* 图标页重绘（redraw 时调用）：初始化/滚动目标/透明度目标/绑定 src */
@@ -1231,7 +1232,7 @@ lv_obj_t *menu_ui_create(void)
     lv_obj_align(s_icon_clock, LV_ALIGN_TOP_RIGHT, -3, ICON_TOP_Y);
     lv_obj_set_style_text_font(s_icon_clock, &lv_font_montserrat_12, 0);
     lv_obj_set_height(s_icon_clock, one_line);
-    lv_label_set_text(s_icon_clock, "--:--");
+    lv_label_set_text(s_icon_clock, "");
     lv_obj_add_flag(s_icon_clock, LV_OBJ_FLAG_HIDDEN);
 
     /* 图标页对象池（预创建 A8 位图，默认隐藏；颜色由主题控制，尺寸用双位图 src 切换） */
@@ -1347,6 +1348,7 @@ void menu_ui_redraw(void)
     } else if (icon_page) {
         icon_redraw(st, pg);
         s_icon_page = true;
+        icon_clock_tick(NULL); /* RTC mirror -> label before the first ICON frame */
     } else {
         s_icon_page = false;
         /* 隐藏残留图标（图标页 → 文本页切换） */

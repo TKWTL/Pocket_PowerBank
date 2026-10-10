@@ -158,8 +158,12 @@ static app_action_t ui_scan_action(void)
         return APP_ACTION_NONE;
     }
 
-    /* 应用态：MENU/NEXT 仅单击；CONF 区分单击/双击/长按 */
+    /* 应用态：NEXT支持双击；菜单态只用单击进行导航。 */
     if (KEY_GetDASClick(KeyIndex_MENU)) { KEY_ClearEdge(KeyIndex_MENU); return APP_ACTION_UP; }
+    if (KEY_GetClickTimes(KeyIndex_NEXT, 2U)) {
+        KEY_ClearEdge(KeyIndex_NEXT);
+        return APP_ACTION_DOWN_DBL;
+    }
     if (KEY_GetDASClick(KeyIndex_NEXT)) { KEY_ClearEdge(KeyIndex_NEXT); return APP_ACTION_DOWN; }
     return key_event(KeyIndex_CONF, APP_ACTION_ENTER, APP_ACTION_ENTER_DBL, APP_ACTION_ENTER_HOLD);
 }

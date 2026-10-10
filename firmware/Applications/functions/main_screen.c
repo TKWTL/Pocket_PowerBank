@@ -406,8 +406,8 @@ static void main_screen_destroy(void)
  *  - APP_ACTION_UP           （MENU 键）→ 打开菜单
  *  - APP_ACTION_ENTER_DBL    （CONF 双击）→ 开关 WLED
  *  - APP_ACTION_ENTER_HOLD   （CONF 长按）→ 调光（方向默认增，长按结束切换，始终存储）
- *  - APP_ACTION_DOWN         （PWR 键）→ 小电流模式（占位，暂不实现）
- * 未来规划：双击开关最长2h的小电流模式。 */
+ *  - APP_ACTION_DOWN_DBL     （PWR/NEXT 双击）→ 小电流/慢充模式。
+ * 可用 SW6306_AlgoGetSpecialMode() 的只读状态供主界面后续显示。 */
 void main_screen_run(app_action_t action)
 {
     static int8_t  s_wled_dir = -1;     /* 调光方向：+1 增亮 / -1 减亮；默认减（变暗），长按结束切换 */
@@ -430,8 +430,8 @@ void main_screen_run(app_action_t action)
     case APP_ACTION_ENTER_HOLD_END:  /* CONF 长按结束：切换调光方向（下次长按反向） */
         s_wled_dir = (int8_t)(-s_wled_dir);
         break;
-    case APP_ACTION_DOWN:    /* PWR 键：小电流模式（占位） */
-        /* TODO: 取消 SW6306 小电流休眠 2h（小电流模式，写 0x28 BLUTHON 等） */
+    case APP_ACTION_DOWN_DBL: /* NEXT/PWR 双击：根据充电状态切换模式 */
+        SW6306_AlgoRequestSpecialToggle();
         break;
     default:
         break;

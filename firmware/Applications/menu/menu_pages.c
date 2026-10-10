@@ -8,6 +8,21 @@
  *     引用子页即实现套娃。
  *
  * 配置宏见 menu.h（MENU_ITEM_* / MENU_PAGE_*）。
+ * API 速查（精确签名见 menu.h）：
+ *   MENU_ITEM_BACK_("Return")         返回父菜单；
+ *   MENU_ITEM_PAGE_(label, &page)     进入子页；
+ *   MENU_ITEM_ACTION_(label, fn)      调用 fn(menu_item_t*)；
+ *   MENU_ITEM_INFO_(ram_text)         显示由菜单刷新函数填写的字符串；
+ *   MENU_ITEM_TOGGLE_/VALUE_/ENUM_    修改变量并调用应用回调；
+ *   MENU_ITEM_APP_(label, &app)       进入 create/activate/run/destroy 全屏应用；
+ *   MENU_PAGE_(title, page, items)    文本菜单；
+ *   MENU_PAGE_ICON_(...)              带正常/选中两套图标的根菜单；
+ *   MENU_WORD_INFO_(page, lines)      3行滚动，CONF返回；
+ *   MENU_WORD_CONFIRM_(page,lines,fn) 阅读到末屏CONF执行动作；
+ *   MENU_WORD_ACTION_(page,lines,hook) 进入/TICK/退出回调。
+ * 新建页面：先在“页面前向声明”处声明对象，再用相应宏定义并由父页引用。
+ * WORD 英文逻辑行不超过20字符；菜单动作只提交RAM请求，禁止在UI任务中操作I2C。
+ * 新增工具应用需实现 menu_app_t 并在 Keil Functions group 登记 .c 文件。
  * 本文件同时保存 i18n 表：菜单树里的 label/title 就是查表用的键，放在一起才好在
  * 改文案时同步。菜单树的条目/页面声明顺序与表的注释分组一一对应。
  */
@@ -59,6 +74,7 @@ static const menu_tr_t menu_tr_table[] = {
     { "Cycles: %lu.%02lu", "循环: %lu.%02lu" },
     { "Learn:%s", "容量学习:%s" },
     { "Waiting", "等待" },
+    { "Idle", "空闲" },
     { "Learning", "学习中" },
     { "Done", "已完成" },
     { "Unknown", "未知" },
@@ -74,6 +90,8 @@ static const menu_tr_t menu_tr_table[] = {
     { "SOS Blink", "SOS 闪灯" },
     { "Screen Test", "屏幕测试" },
     { "Emergency Light", "紧急闪灯" },
+    { "Max Bright Pulses", "最高亮度脉冲" },
+    { "100ms Dot / 5s+", "100ms点 / 5秒以上" },
     { "Function Not Ready", "功能尚未完成" },
     { "Cycles Solid Colors", "循环显示纯色" },
     { "Check Pixel Defects", "检查坏点" },
@@ -747,10 +765,14 @@ void menu_status_refresh(void)
             sw6306_learn_state_t ls = SW6306_ReadLearnState();
             const char *st;
             switch (ls) {
-            case SW6306_LEARN_ST_WAITING: st = menu_tr("Waiting"); break;
-            case SW6306_LEARN_ST_ING:     st = menu_tr("Learning");     break;
-            case SW6306_LEARN_ST_DONE:    st = menu_tr("Done");    break;
-            default:                      st = menu_tr("Unknown"); break;
+            case SW6306_LEARN_ST_DONE: st = menu_tr("Done"); break;
+            case SW6306_LEARN_ST_ING:
+                st = menu_tr(SW6306_IsCharging() ? "Learning" : "Idle");
+                break;
+            case SW6306_LEARN_ST_WAITING:
+                st = menu_tr(SW6306_IsCharging() ? "Waiting" : "Idle");
+                break;
+            default: st = menu_tr("Unknown"); break;
             }
             mini_snprintf(menu_status_learn, sizeof(menu_status_learn), menu_tr("Learn:%s"), st);
         }
@@ -811,14 +833,21 @@ void menu_status_refresh(void)
 }
 
 /* ==================== 工具页 ==================== */
+static void sos_confirm_apply(menu_item_t *it)
+{
+    (void)it;
+    menu_app_enter(&menu_app_sos);
+}
+
 static const char * const word_sos[] = {
     "SOS Blink",
     "Emergency Light",
-    "Function Not Ready",
+    "Max Bright Pulses",
+    "100ms Dot / 5s+",
     "Press NEXT to Exit",
-    "Press CONF to Exit",
+    "Press CONF to Start",
 };
-MENU_WORD_CONFIRM_(menu_page_sos, word_sos, NULL);
+MENU_WORD_CONFIRM_(menu_page_sos, word_sos, sos_confirm_apply);
 
 static void screen_test_confirm_apply(menu_item_t *it)
 {

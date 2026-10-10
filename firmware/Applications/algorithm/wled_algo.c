@@ -418,7 +418,8 @@ void WLED_AlgoRequestSOS(uint8_t enable)
     taskEXIT_CRITICAL();
 }
 
-/* PWM=625 for Morse on pulses. Enforce peak_PWM * total_on_ms /
+/* Morse on-pulses use hardware WLED_PWM_MAX=1023, not the normal
+ * WLED_BRIGHTNESS_MAX^2=625. Enforce peak_PWM * total_on_ms /
  * period <= squared continuous thermal level, with >=5s per cycle.
  * This increases the OFF gap as the case becomes hot. Hard NTC 60C trip
  * and zero-capacity shutdown still operate independently. */

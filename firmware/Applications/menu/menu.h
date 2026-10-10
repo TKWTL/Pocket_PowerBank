@@ -186,7 +186,7 @@ void menu_process(void);                /* 每个UI循环执行WORD_ACTION hook 
 /* ---------- 统一按键动作（仿 MiaoUI UI_ACTION） ----------
  * 物理按键在 UI 调度层一次性映射为语义化动作；菜单系统与
  * 功能界面各自解释动作，互不耦合、便于按界面定制。
- * MENU/NEXT 仅单击；CONF 四态：单击/双击/长按（持续）/长按结束
+ * MENU单击，NEXT在应用态支持双击；CONF四态：单击/双击/长按（持续）/长按结束
  * （长按结束由 ui_loop 检测 HOLD→NONE 边沿产生，见 ui_task）。 */
 typedef enum {
     APP_ACTION_NONE = 0,

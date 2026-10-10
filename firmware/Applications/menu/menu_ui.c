@@ -356,15 +356,17 @@ static void pos_prev_corner(lv_obj_t *lbl)
 
 /* ---------- 条目配色（必须定义在所有使用它的函数之前） ----------
  * 三种角色，各一个函数，互不复用（曾经复用导致过一次"角落也变白"的连锁错误）：
- *  - item_selected_color()：中间选中行。Return 用白色（on_primary，突出高亮），
- *    其余用普通文字色；"<" 与文字同一 label，所以一起变色。
+ *  - item_selected_color()：中间选中行。Return 在深色主题用白色，
+ *    浅色主题用深色文字，避免白底白字；其余用普通文字色。
  *  - item_dim_color()：未选中且非 Return 的次要灰。
  *  - item_corner_color()：角落（未选中）标签。Return 保持主题色 primary（要求如此），
  *    其余落灰。 */
 static lv_color_t item_selected_color(const menu_item_t *it)
 {
     if (it && it->type == MENU_ITEM_BACK) {
-        return menu_theme_get()->on_primary;   /* 选中 Return：白色高亮（不是主题色） */
+        /* Return: white in Dark Theme, dark text on Light Theme white background. */
+        return (menu_theme_get_id() == MENU_THEME_LIGHT) ?
+               menu_theme_get()->text : menu_theme_get()->on_primary;
     }
     return menu_theme_get()->text;
 }
@@ -485,7 +487,7 @@ static void snap_static(const menu_page_t *pg, uint8_t index)
         center_set_text(s_item, buf, item_no_scroll(&pg->items[index], menu_get_state()->editing));
         item_recenter(s_item);
         lv_obj_set_y(s_item, MENU_ROW_MID_Y);
-        /* 选中项高亮色：选中 Return 用白色，其余普通文字色（"<" 与文字同一 label） */
+        /* 选中项高亮色：Return 采用主题适配文字色，其余使用普通文字色。 */
         lv_obj_set_style_text_color(s_item, item_selected_color(&pg->items[index]), 0);
         lv_obj_remove_flag(s_item_prev, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_item_next, LV_OBJ_FLAG_HIDDEN);
@@ -671,7 +673,7 @@ static void slide_commit_next(const menu_page_t *pg, uint8_t index)
     if (n > 0 && index < n) {
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
         center_set_text(s_item, buf, item_no_scroll(&pg->items[index], menu_get_state()->editing));
-        /* 落定高亮：选中 Return 用白色，其余用普通文字色（"<" 与文字同一 label） */
+        /* 落定高亮：Return 使用适配明暗主题的颜色，避免浅色主题白字消失。 */
         lv_obj_set_style_text_color(s_item, item_selected_color(&pg->items[index]), 0);
         /* 必须重新居中：动画期间中间项按【未选中简格式】文本宽度定位，
          * 换成完整格式（带箭头/选项）后宽度变了，沿用旧 x 会让它偏左甚至看起来"消失"
@@ -863,7 +865,7 @@ static void apply_theme(const menu_page_t *pg, uint8_t index)
     /* 当前条目：静止高亮；滑动动画中灰色（防止动画期间任何 redraw 把
      * s_item/s_item_in 刷回高亮，造成新旧选中项同时高亮——
      * 高亮只允许出现在静止态的中间项）。
-     * Return（MENU_ITEM_BACK）选中时用主题色 primary，"<" 与文字同一 label 一起变色。 */
+     * Return（MENU_ITEM_BACK）选中时深色白字、浅色深字；箭头与文字一起变色。 */
     lv_obj_set_style_text_color(s_item,
         s_sliding ? item_dim_color() : item_selected_color(page_item(pg, index)), 0);
     lv_obj_set_style_text_color(s_item_in,

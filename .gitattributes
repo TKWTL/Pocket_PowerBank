@@ -1,0 +1,36 @@
+# .gitattributes - 按文件类型指定 Git 的存储/换行/diff 行为
+#
+# 背景：本机 core.autocrlf=true，仓库里存的是 LF，而 Keil 每次保存工程都会写 CRLF，
+# 于是 Pocket_PowerBank.uvprojx / .uvoptx 在 git status 里永远显示 modified、
+# git diff 内容却是空的，导致 git pull 反复被 "local changes would be overwritten" 拒绝。
+# 下面把这两个文件钉成 LF：存进仓库是 LF、检出到工作区也是 LF，
+# 与仓库现状一致（不会产生全文件换行 diff），Keil 写出的 CRLF 会被规范化掉。
+#
+# 注意：这里刻意不写 "* text=auto"。那会把全仓库源文件统一成 LF，
+# 而 Keil 存盘又会写回 CRLF，等于把"项目文件噪音"扩散到所有 .c/.h，反而更糟。
+
+# ---------- Keil MDK 工程文件：固定 LF ----------
+*.uvprojx   text eol=lf
+*.uvoptx    text eol=lf
+
+# ---------- 图片与二进制资源：原样保存，不做换行转换/文本 diff ----------
+# binary 等价于 "-text -diff"：不转换换行、不当作文本 diff（图片本身是二进制，
+# 按代码方式保存会被换行转换破坏；这里统一按非代码方式存取）。
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.bmp       binary
+*.webp      binary
+*.ico       binary
+*.tif       binary
+*.tiff      binary
+*.svg       binary
+*.ttf       binary
+*.otf       binary
+*.woff      binary
+*.woff2     binary
+*.pyc       binary
+
+# ---------- 其它 ---
+# 说明：hex/axf/o/dep/map/uvguix 等构建产物已由 .gitignore 排除，无需在此声明。

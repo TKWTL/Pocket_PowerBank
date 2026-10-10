@@ -4,7 +4,7 @@
  * Layering:
  *   UI -> request only
  *   wled_algo -> state / policy, reads SW6306 mirror only
- *   load_task -> executes PWM writes and SW6306 A1 insert/remove events
+ *   load_task -> executes PWM writes and SW6306 C2 insert/remove events
  *   drivers -> hardware access only
  */
 #include "wled_algo.h"
@@ -271,7 +271,10 @@ static void wled_pwm_ramp(void)
 /* WLED由独立Boost供电；当没有真实C1/充电通路时，SW6306可能不进入正常放电计量。
  * 因此算法请求“假插入A1”让SW6306保持计量通路，并显式记录ownership：
  * 只有本算法创建并确认的A1才允许主动移除。真实C1或充电通路接管时延迟1s让位；
- * 关灯PWM归零后再保留200ms再拔假A1。算法本身不发I2C，只产生端口命令。 */
+ * 关灯PWM归零后再保留200ms再拔假A1。算法本身不发I2C，只产生端口命令。
+ * 假插入口必须用 A1：实测 A2/C2 无效（芯片只为检测到有负载的口开通路，
+ * 本板 A2/C2 无连接器，写 PORTEVT 后 sys_stat 恒为 0）。
+ * A1 假插入与真实负载由 UI 用 BUS 电流区分（main_screen.c a1_is_real_load）。 */
 static void wled_request_port(wled_port_cmd_t cmd)
 {
     if (s_port_cmd == WLED_PORT_CMD_NONE) s_port_cmd = cmd;
@@ -363,7 +366,7 @@ static void wled_meter_path_tick(void)
 
 /************************* WLED 算法调度与状态接口开始 **************************/
 /* load_task以10ms推进快速算法、500ms推进低频兜底保护；
- * PWM与A1端口命令均由load_task取出后执行，读接口只返回RAM状态。 */
+ * PWM与C2端口命令均由load_task取出后执行，读接口只返回RAM状态。 */
 void WLED_AlgoInit(void)
 {
     s_level = 0U;

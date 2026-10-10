@@ -10,7 +10,8 @@ static void sw6306_update_sleep_block(void)
     pm_api_set_sleep_block(PM_BLOCK_LOW_CURRENT,
         SW6306_AlgoGetSpecialMode() == SW6306_SPECIAL_LOW_CURRENT);
 
-    /* 任意端口通路打开（本硬件真实口：C1/A1；A1 兼作 WLED 假插入口） */
+    /* 任意端口通路打开（本硬件真实口：C1/A1；A1 兼作 WLED 假插入口。
+     * 假插入与真实负载由 UI 用 BUS 电流区分，见 main_screen.c a1_is_real_load） */
     port_on = (SW6306_IsPortC1ON() != 0 || SW6306_IsPortA1ON() != 0) ? 1 : 0;
     /* 任意充/放电电流 */
     curr_busy = (SW6306_ReadIBUS() > 50 || SW6306_ReadIBAT() > 50) ? 1 : 0;
@@ -63,9 +64,15 @@ void SW6306_task_func(void *pvParameters)
             SW6306_AlgoInvalidateDischargeSession();
             SW6306_ForceOff();
             SW6306_Init();
+            /* 关闭外部系统电流补算（0xA4 EXTSYS 区）。
+             * 那是旧版硬件的方案：控制电路（含 WLED Boost）从电池端检流电阻“之后”取电，
+             * 检流电阻读不到这部分电流，只能由 MCU 写寄存器补算，
+             * 所以旧代码在这里把方向设成放电、并塞一个固定 10mA。
+             * 新版硬件取电点统一移到检流电阻“之前”，WLED 电流天然流经检流电阻、
+             * 由芯片内部库仑计统计（实测：A1 假插入亮灯时 BatCap 会下降）。
+             * 因此这里必须保持关闭，否则同一份电流被重复计入两次。
+             * SW6306_Iext* 三个 API 保留在驱动里（SW6306 库是面向通用驱动的），仅本应用不再使用。 */
             SW6306_IextEnSet(0);
-            SW6306_IextDirSet(1);
-            SW6306_IextSet(10);
             if (SW6306_IsInitialized()) {
                 SW6306_AlgoOnDriverReinitialized();
             }

@@ -8,8 +8,14 @@
  */
 #include "menu_theme.h"
 
-/* 可选主题色板（0xRRGGBB），供设置页选择 */
+/* 可选主题色板（0xRRGGBB），供设置页选择。
+ * 索引 0 = 琥珀色，同时是开机默认主题色（见 s_primary_rgb）。
+ * 默认色放在索引 0 是刻意的：设置页 s_theme_color_idx 初值为 0，
+ * menu_theme_primary_index() 未命中时也返回 0，因此"默认色"与
+ * "设置页选中项"天然一致，不需要额外的同步代码。
+ * 新增琥珀是【延长色板】（MENU_PALETTE_COUNT 6→7），原有 6 色整体顺延，不淘汰任何颜色。 */
 const uint32_t menu_palette[MENU_PALETTE_COUNT] = {
+    0xFFB300,   /* 琥珀（默认，新增） */
     0x2A6DF4,   /* 蓝 */
     0x16A34A,   /* 绿 */
     0xF97316,   /* 橙 */
@@ -44,7 +50,7 @@ static const menu_base_t s_base_light = {
 };
 
 static menu_theme_id_t s_theme_id = MENU_THEME_DARK;
-static uint32_t s_primary_rgb = 0x2A6DF4;
+static uint32_t s_primary_rgb = 0xFFB300;   /* 默认主题色 = 琥珀，须与 menu_palette[0] 一致 */
 
 const menu_theme_t *menu_theme_get(void)
 {

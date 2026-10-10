@@ -902,14 +902,14 @@ MENU_PAGE_("Games", menu_page_games, menu_items_games);
  * 3行窗口，PREV/NEXT有边界滚动，CONF返回根ICON页。 */
 static const char * const word_about[] = {
     "Pocket PowerBank",
-    "20Wh 2S / SW6306",
-    "Firmware 1.2.0",
-    "AT32F423 + LVGL 9.4",
-    "Open Source Hardware",
-    "Author: TKWTL",
-    "https://github.com/",
-    "TKWTL/",
+    "Author:TKWTL   Git:",
+    "github.com/TKWTL/",
     "Pocket_PowerBank",
+    " ",
+    "Powered by:",
+    "SW6306 + 2S 18650",
+    "AT32F423 + LVGL 9.4",
+    "Firmware 1.2.0",
 };
 MENU_WORD_INFO_(menu_page_about, word_about);
 

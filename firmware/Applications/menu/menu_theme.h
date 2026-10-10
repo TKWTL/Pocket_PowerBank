@@ -33,7 +33,7 @@ typedef enum {
 } menu_theme_id_t;
 
 /* 可选主题色板（0xRRGGBB），供设置页选择 */
-#define MENU_PALETTE_COUNT 6
+#define MENU_PALETTE_COUNT 7
 extern const uint32_t menu_palette[MENU_PALETTE_COUNT];
 
 /* 取当前组合后的主题（内部静态缓冲，勿长期持有指针） */

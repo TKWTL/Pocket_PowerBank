@@ -24,6 +24,9 @@ extern "C" {
 
 #define WLED_ALGO_TICK_MS              10U
 #define WLED_RAMP_TICKS                16U   /* 160ms */
+/* 假插入口固定为 A1：实测 A2/C2 均无效（芯片只为"检测到有负载的口"开通路，
+ * 本板 A2/C2 无连接器，写 PORTEVT 事件后 sys_stat 始终为 0），故回退 A1。
+ * A1 上的假插入由 UI 用 BUS 电流区分（见 main_screen.c a1_is_real_load）。 */
 #define WLED_FAKE_A1_DETACH_TICKS     100U   /* 1s hand-over debounce */
 #define WLED_FAKE_A1_POST_OFF_TICKS    20U   /* 200ms after PWM reaches 0 */
 #define WLED_FAKE_A1_RETRY_TICKS      100U   /* 1s: covers the SW6306 status refresh period */

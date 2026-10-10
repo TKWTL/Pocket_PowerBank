@@ -88,8 +88,8 @@ static void data_refresh_all(void)
 static void wled_service_10ms(void)
 {
     uint16_t pwm;
+    uint16_t pwm_out;
     wled_port_cmd_t cmd;
-    uint8_t on;
 
     WLED_AlgoTick10ms();
 
@@ -104,9 +104,14 @@ static void wled_service_10ms(void)
         WLED_SetPwm(pwm);
     }
 
-    on = WLED_AlgoIsOn();
-    pm_api_set_sleep_block(PM_BLOCK_WLED, on);
-    if (on != 0U) pm_api_refresh_idle();
+    /* 休眠门控绑定【实际 PWM 输出】，而不是 s_level（用户意图）。
+     * 原因：s_level 在收到开关请求时立刻置位，但 PWM 还要过计量通路门控
+     * （s_path_ok）和 160ms 渐变才会真正输出。若假插入口没确认（s_path_ok=0），
+     * s_level 已是 12 而 s_pwm 恒为 0 —— 此时若按 s_level 阻止休眠，
+     * 就会出现"灯没亮、却一直拒绝休眠、30s 倒计时被打断"的假激活状态。 */
+    pwm_out = WLED_AlgoGetPwm();
+    pm_api_set_sleep_block(PM_BLOCK_WLED, (pwm_out != 0U) ? 1U : 0U);
+    if (pwm_out != 0U) pm_api_refresh_idle();
 }
 
 /* load_task 任务入口：10ms 状态机（周期 500ms 刷新 + 请求即立即一轮完整读取）

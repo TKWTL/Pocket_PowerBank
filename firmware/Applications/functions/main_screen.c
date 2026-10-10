@@ -41,6 +41,22 @@ void main_screen_run(app_action_t action);   /* 前向声明（menu_app_main 定
  *   - 多口/同时充放：端口状态照常显示，但不显示协议（多口时单组 qcstat 无法分口）
  *   - 端口未启动：OFF */
 /* 端口状态标签立即刷新（create 时调用一次，之后 timer 周期刷新） */
+
+/* A1口真实负载判据：通路打开 且 BUS电流 > 20mA。
+ * 背景：A1 兼作 WLED 假插入口——固件为了让 WLED 电流流经检流电阻、进库仑计，
+ * 会在开灯期间"假插入 A1"。假插入本身没有负载电流（A1 通路空载），
+ * 而真插了设备就会有实际放电电流，所以用电流区分两者：
+ *   通路开 + 无电流 = 假插入（UI 不显示，避免用户以为插了东西）
+ *   通路开 + 有电流 = 真插入（UI 正常显示 A 口）
+ * 一旦有电流，假插入也就等价于真插入了，无需额外状态。 */
+#define MAIN_SCREEN_A1_LOAD_MA   20U
+
+static uint8_t a1_is_real_load(void)
+{
+    if (SW6306_IsPortA1ON() == 0U) return 0U;
+    return (SW6306_ReadIBUS() > MAIN_SCREEN_A1_LOAD_MA) ? 1U : 0U;
+}
+
 static void port_label_update(lv_obj_t *label)
 {
     lv_obj_set_style_text_font(label, menu_font_main(), 0);
@@ -48,7 +64,7 @@ static void port_label_update(lv_obj_t *label)
     const char *proto = SW6306_ReadProtocol();
     uint8_t c_in  = SW6306_IsCharging() ? 1 : 0;
     uint8_t c_out = (SW6306_IsDischarging() && SW6306_IsPortC1ON()) ? 1 : 0;
-    uint8_t a_out = SW6306_IsPortA1ON() ? 1 : 0;
+    uint8_t a_out = a1_is_real_load();
     uint8_t c_act = c_in || c_out;
     uint8_t has_proto = (proto && strcmp(proto, "NONE") != 0) ? 1 : 0;
     const char *p_s;

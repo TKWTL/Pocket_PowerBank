@@ -40,6 +40,15 @@ extern sw6306_algo_config_t SW6306_AlgoConfig;
 
 #define SW6306_ALGO_LOAD_STEP_MS 100U
 
+/* RAM-only low-current policy: default 80mA / 1h idle. */
+extern uint16_t SW6306_LowCurrentThreshold_mA;
+extern uint32_t SW6306_LowCurrentIdleTimeout_ms;
+typedef enum {
+    SW6306_SPECIAL_NONE = 0,
+    SW6306_SPECIAL_LOW_CURRENT,
+    SW6306_SPECIAL_SLOW_CHARGE
+} sw6306_special_mode_t;
+
 void SW6306_AlgoInit(void);
 
 /* SW6306_task只负责周期调度；具体Load分组与周期由algo持有。
@@ -51,6 +60,7 @@ void SW6306_AlgoLoadAll(void);
 /* 由容量Load路径在获得fresh Capacity镜像后调用。 */
 void SW6306_AlgoUpdate(void);
 void SW6306_AlgoProcessCommands(void);
+void SW6306_AlgoService100ms(void);
 void SW6306_AlgoInvalidateDischargeSession(void);
 void SW6306_AlgoOnDriverReinitialized(void);  /* SW6306_task: 重新应用算法层配置 */
 
@@ -65,11 +75,13 @@ void SW6306_AlgoRequestUFCSBroadcast(void);
 void SW6306_AlgoRequestPowerApply(void);
 void SW6306_AlgoRequestRecordFactoryCapacity(void);
 void SW6306_AlgoRequestReinit(void);
+void SW6306_AlgoRequestSpecialToggle(void);
 
 /* Read-only derived state for UI. */
 float SW6306_AlgoGetSOHPercent(void);
 float SW6306_AlgoGetEquivalentCycles(void);
 uint8_t SW6306_AlgoDischargeSessionActive(void);
+sw6306_special_mode_t SW6306_AlgoGetSpecialMode(void);
 
 #ifdef __cplusplus
 }

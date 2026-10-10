@@ -24,6 +24,7 @@
 #define SW6306_CMD_RECORD_FACTORY (1U << 5)
 #define SW6306_CMD_REINIT         (1U << 6)
 #define SW6306_CMD_LEARN_REARM    (1U << 7)
+#define SW6306_CMD_LOW_CURRENT    (1U << 8)
 
 sw6306_algo_config_t SW6306_AlgoConfig = {
     1U, 1U,             /* PD out/in */
@@ -41,18 +42,26 @@ sw6306_algo_config_t SW6306_AlgoConfig = {
 /***************************** 通用命令请求机制开始 *****************************/
 /* UI/算法只置 RAM bit；真正的 SW6306 寄存器写由 SW6306_task 调用
  * SW6306_AlgoProcessCommands() 串行执行，避免 UI 线程直接发 I2C。 */
-static volatile uint8_t s_commands;
+static volatile uint16_t s_commands;
+static volatile uint8_t s_special_toggle_req;
+static volatile sw6306_special_mode_t s_special_mode;
+static uint32_t s_last_high_load_tick;
+static uint8_t s_slow_stop_count;
 
-static void sw6306_algo_set_command(uint8_t mask)
+/* RAM-only parameters; not written to NVM. */
+uint16_t SW6306_LowCurrentThreshold_mA = 80U;
+uint32_t SW6306_LowCurrentIdleTimeout_ms = 3600000UL;
+
+static void sw6306_algo_set_command(uint16_t mask)
 {
     taskENTER_CRITICAL();
     s_commands |= mask;
     taskEXIT_CRITICAL();
 }
 
-static uint8_t sw6306_algo_take_commands(void)
+static uint16_t sw6306_algo_take_commands(void)
 {
-    uint8_t cmd;
+    uint16_t cmd;
     taskENTER_CRITICAL();
     cmd = s_commands;
     s_commands = 0U;
@@ -60,7 +69,7 @@ static uint8_t sw6306_algo_take_commands(void)
     return cmd;
 }
 
-static void sw6306_algo_restore_commands(uint8_t mask)
+static void sw6306_algo_restore_commands(uint16_t mask)
 {
     if (mask == 0U) return;
     taskENTER_CRITICAL();
@@ -214,6 +223,10 @@ void SW6306_AlgoInit(void)
     s_learn_state = SW6306_LEARN_ST_UNKNOWN;
     s_load_phase = 0U;
     s_capacity_cycle = 1U;
+    s_special_mode = SW6306_SPECIAL_NONE;
+    s_special_toggle_req = 0U;
+    s_slow_stop_count = 0U;
+    s_last_high_load_tick = xTaskGetTickCount();
 
     /* 算法层配置是唯一真实配置源；容量学习固定常开。
      * 注意这里只“确保使能”，不清 LEARN_END。 */
@@ -307,12 +320,59 @@ void SW6306_AlgoUpdate(void)
 
 
 
+/*************************** 小电流与慢充策略开始 *******************************/
+/* UI requests stay in RAM; this runs in SW6306_task. Low current ends after
+ * 1h without IBUS>80mA. Slow charge halves current configured input power. */
+void SW6306_AlgoService100ms(void)
+{
+    uint8_t toggle;
+    sw6306_special_mode_t next;
+    uint32_t now = xTaskGetTickCount();
+
+    if (!SW6306_IsInitialized()) return;
+
+    taskENTER_CRITICAL();
+    toggle = s_special_toggle_req;
+    s_special_toggle_req = 0U;
+    taskEXIT_CRITICAL();
+
+    next = s_special_mode;
+    if (toggle != 0U) {
+        next = (next != SW6306_SPECIAL_NONE) ? SW6306_SPECIAL_NONE :
+               (SW6306_IsCharging() ? SW6306_SPECIAL_SLOW_CHARGE : SW6306_SPECIAL_LOW_CURRENT);
+    } else if (next == SW6306_SPECIAL_SLOW_CHARGE) {
+        if (SW6306_IsCharging()) s_slow_stop_count = 0U;
+        else if (++s_slow_stop_count >= 20U) next = SW6306_SPECIAL_NONE; /* 2s debounce */
+    } else if (next == SW6306_SPECIAL_LOW_CURRENT) {
+        if (SW6306_IsCharging()) {
+            next = SW6306_SPECIAL_NONE;
+        } else {
+            if (SW6306_ReadIBUS() > SW6306_LowCurrentThreshold_mA) s_last_high_load_tick = now;
+            if ((uint32_t)(now - s_last_high_load_tick) >=
+                pdMS_TO_TICKS(SW6306_LowCurrentIdleTimeout_ms)) next = SW6306_SPECIAL_NONE;
+        }
+    }
+
+    if (next != s_special_mode) {
+        s_special_mode = next;
+        s_slow_stop_count = 0U;
+        s_last_high_load_tick = now;
+        sw6306_algo_set_command(SW6306_CMD_POWER | SW6306_CMD_LOW_CURRENT);
+    }
+}
+
+sw6306_special_mode_t SW6306_AlgoGetSpecialMode(void)
+{
+    return s_special_mode;
+}
+/*************************** 小电流与慢充策略结束 *******************************/
+
 /*************************** SW6306 配置应用算法开始 ****************************/
 /* 协议、功率、容量学习常开、SOH基准记录和手动重初始化都由命令位合并，
  * 只在 SW6306_task 中执行实际寄存器操作。 */
 void SW6306_AlgoProcessCommands(void)
 {
-    uint8_t cmd = sw6306_algo_take_commands();
+    uint16_t cmd = sw6306_algo_take_commands();
     uint8_t retry = 0U;
 
     if (cmd == 0U) return;
@@ -320,7 +380,7 @@ void SW6306_AlgoProcessCommands(void)
     if (cmd & SW6306_CMD_REINIT) {
         SW6306_AlgoInvalidateDischargeSession();
         SW6306_MarkUninitialized();
-        cmd &= (uint8_t)~SW6306_CMD_REINIT;
+        cmd &= (uint16_t)~SW6306_CMD_REINIT;
     }
 
     if (!SW6306_IsInitialized()) {
@@ -351,7 +411,15 @@ void SW6306_AlgoProcessCommands(void)
 
     if (cmd & SW6306_CMD_POWER) {
         SW6306_SetMaxOutputPower((uint8_t)SW6306_AlgoConfig.output_power_w);
-        SW6306_SetMaxInputPower((uint8_t)SW6306_AlgoConfig.input_power_w);
+        uint8_t input_w = (uint8_t)SW6306_AlgoConfig.input_power_w;
+        if (s_special_mode == SW6306_SPECIAL_SLOW_CHARGE) {
+            input_w = (uint8_t)((input_w + 1U) / 2U);
+        }
+        SW6306_SetMaxInputPower(input_w);
+    }
+
+    if (cmd & SW6306_CMD_LOW_CURRENT) {
+        SW6306_SetLowCurrentMode(s_special_mode == SW6306_SPECIAL_LOW_CURRENT);
     }
 
     if (cmd & SW6306_CMD_LEARN_ENABLE) {
@@ -391,7 +459,8 @@ void SW6306_AlgoOnDriverReinitialized(void)
     s_capacity_cycle = 1U;
     sw6306_algo_set_command(SW6306_CMD_PROTOCOL |
                             SW6306_CMD_POWER |
-                            SW6306_CMD_LEARN_ENABLE);
+                            SW6306_CMD_LEARN_ENABLE |
+                            SW6306_CMD_LOW_CURRENT);
 }
 /*************************** SW6306 配置应用算法结束 ****************************/
 
@@ -414,6 +483,13 @@ void SW6306_AlgoRequestUFCSBroadcast(void)
 void SW6306_AlgoRequestPowerApply(void)
 {
     sw6306_algo_set_command(SW6306_CMD_POWER);
+}
+
+void SW6306_AlgoRequestSpecialToggle(void)
+{
+    taskENTER_CRITICAL();
+    s_special_toggle_req ^= 1U;
+    taskEXIT_CRITICAL();
 }
 
 void SW6306_AlgoRequestRecordFactoryCapacity(void)

@@ -9,7 +9,8 @@ extern "C" {
 
 #define PM_BLOCK_SW6306_LOAD    0x01U
 #define PM_BLOCK_WLED           0x02U   /* WLED 开启时阻止系统休眠 */
-#define PM_BLOCK_CALIBRATION    0x04U   /* 自动校准应用运行时阻止系统休眠 */
+#define PM_BLOCK_CALIBRATION    0x04U
+#define PM_BLOCK_LOW_CURRENT    0x08U /* no DeepSleep while low-current mode */   /* 自动校准应用运行时阻止系统休眠 */
 
 void pm_api_refresh_idle(void);
 void pm_api_force_sleep(void);          /* 手动休眠：立即进入休眠流程 */

@@ -811,6 +811,21 @@ SW6306_RET SW6306_PPSEnable(SW6306_ARGS(sw6306_pps_t pps, uint8_t enable))
     SW6306_FUNC_END;
 }
 
+/* SW6306 register-owned low-current mode, 4h hardware backup. */
+SW6306_RET SW6306_SetLowCurrentMode(SW6306_ARGS(uint8_t enable))
+{
+    SW6306_FUNC_BEGIN;
+    SW6306_MUTEX_TAKE;
+    SW6306_SPAWN_NOARG(SW6306_Unlock_Nolock);
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_INDET4);
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_INDET4,
+        SW6306_INDET4_BLUTHREGSET | SW6306_INDET4_BLUTHEN | SW6306_INDET4_BLUTH4H,
+        enable ? (SW6306_INDET4_BLUTHREGSET | SW6306_INDET4_BLUTHEN |
+                  SW6306_INDET4_BLUTH4H) : 0U);
+    SW6306_MUTEX_GIVE;
+    SW6306_FUNC_END;
+}
+
 /* 设置最大输入功率（单位W，最大100W）：解锁并写 PISET(0x45)，同步镜像 */
 SW6306_RET SW6306_SetMaxInputPower(SW6306_ARGS(uint8_t watt))
 {

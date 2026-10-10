@@ -6,6 +6,10 @@ static void sw6306_update_sleep_block(void)
     uint8_t curr_busy;
     uint8_t bus_active;
 
+    /* A low-current idle load must not put the MCU/SW6306 to sleep. */
+    pm_api_set_sleep_block(PM_BLOCK_LOW_CURRENT,
+        SW6306_AlgoGetSpecialMode() == SW6306_SPECIAL_LOW_CURRENT);
+
     /* 任意端口通路打开（本硬件真实口：C1/A1；A1 兼作 WLED 假插入口） */
     port_on = (SW6306_IsPortC1ON() != 0 || SW6306_IsPortA1ON() != 0) ? 1 : 0;
     /* 任意充/放电电流 */
@@ -51,6 +55,7 @@ void SW6306_task_func(void *pvParameters)
         if (sw6306_gate_check()) continue;
 
         SW6306_AlgoLoadStep();
+        SW6306_AlgoService100ms();
         SW6306_AlgoProcessCommands();
 
         if (SW6306_IsInitialized() == 0U) {

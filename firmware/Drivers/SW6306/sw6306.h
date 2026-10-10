@@ -1393,6 +1393,7 @@ typedef enum {
     SW6306_PPS_3        /* PPS3（最大 21V） */
 } sw6306_pps_t;
 SW6306_RET SW6306_PPSEnable(SW6306_ARGS(sw6306_pps_t pps, uint8_t enable)); //使能/禁止指定 PPS 档位（0x134 PD1）
+SW6306_RET SW6306_SetLowCurrentMode(SW6306_ARGS(uint8_t enable));       //0x11B register-owned low-current, 4h backup
 SW6306_RET SW6306_SetMaxInputPower(SW6306_ARGS(uint8_t watt));              //设置最大输入功率（单位W，如30/18；写 PISET 0x45）
 SW6306_RET SW6306_PPSBroadcast(SW6306_NOARG);   //手动触发 PD/PPS 电流能力播发（Source Capability 重播）
 SW6306_RET SW6306_UFCSBroadcast(SW6306_NOARG);  //手动触发 UFCS 电流能力播发（Source Capability 重播）

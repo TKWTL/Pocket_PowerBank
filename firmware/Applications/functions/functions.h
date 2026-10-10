@@ -5,7 +5,7 @@
  * 调用的一次性函数、主界面（待机信息屏）的创建/显示等。
  * 各功能的实现按功能分开在各自 .c 中（无 functions_ 前缀）：
  *   - main_screen.c   主界面（待机信息屏）创建/显示
- *   - reset.c         系统复位
+ *   - reset.c         系统复位与运输模式
  *
  * 新增功能函数步骤：
  *  1. 新建 functions_<功能>.c 实现（含本头文件以保持声明一致）；
@@ -40,6 +40,7 @@ void ui_orientation_lock_set(uint8_t lock);
 
 /* ---------- 一次性动作函数（MENU_ITEM_ACTION_ 调用） ---------- */
 void action_reset_now(menu_item_t *it);   /* WORD_CONFIRM：请求恢复用户设置并复位 */
+void action_transport_mode(menu_item_t *it); /* WORD_CONFIRM：请求运输模式 Standby */
 void action_reset_process(void);            /* load_task：NVM成功落盘后真正复位 */
 
 #ifdef __cplusplus

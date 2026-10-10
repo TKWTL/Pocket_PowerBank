@@ -47,6 +47,7 @@ static const menu_tr_t menu_tr_table[] = {
     { "Pocket PowerBank", "口袋充电宝" },
     { "Firmware 1.2.0", "固件 1.2.0" },
     { "Open Source Hardware", "开源硬件" },
+    { "Author: TKWTL", "作者: TKWTL" },
     /* ---- Status 页 ---- */
     { "Battery", "电池" },
     { "Accelerator", "加速度" },
@@ -147,7 +148,7 @@ static const menu_tr_t menu_tr_table[] = {
     { "Minimum Power State", "最低功耗状态" },
     { "Wake: Press PWR/NEXT", "按 PWR/NEXT 唤醒" },
     { "System Will Reset", "系统将复位" },
-    { "Runtime Settings Lost", "运行时设置会丢失" },
+    { "RAM Settings Lost", "运行时设置会丢失" },
     { "Press CONF to Enter", "按 CONF 进入" },
     { "Reset", "复位" },
     /* System → Clock（原 Settings→Time：SD3078 时间设置 + 后备电池充电） */
@@ -635,22 +636,16 @@ static void factory_option_apply(menu_item_t *it)
     s_factory_unlocked = 0U;   /* 授权只允许进入一次，进入后立即清除 */
 }
 
-static void transport_mode_apply(menu_item_t *it)
-{
-    (void)it;
-    pm_api_enter_transport_mode();
-}
-
 static const char * const word_transport[] = {
     "Transport Mode",
     "Minimum Power State",
     "Wake: Press PWR/NEXT",
     "System Will Reset",
-    "Runtime Settings Lost",
+    "RAM Settings Lost",
     "Press NEXT to Exit",
     "Press CONF to Enter",
 };
-MENU_WORD_CONFIRM_(menu_page_transport, word_transport, transport_mode_apply);
+MENU_WORD_CONFIRM_(menu_page_transport, word_transport, action_transport_mode);
 
 static const menu_item_t menu_items_system[] = {
     MENU_ITEM_BACK_("Return"),
@@ -878,9 +873,14 @@ MENU_PAGE_("Games", menu_page_games, menu_items_games);
  * 3行窗口，PREV/NEXT有边界滚动，CONF返回根ICON页。 */
 static const char * const word_about[] = {
     "Pocket PowerBank",
+    "20Wh 2S / SW6306",
     "Firmware 1.2.0",
     "AT32F423 + LVGL 9.4",
     "Open Source Hardware",
+    "Author: TKWTL",
+    "https://github.com/",
+    "TKWTL/",
+    "Pocket_PowerBank",
 };
 MENU_WORD_INFO_(menu_page_about, word_about);
 

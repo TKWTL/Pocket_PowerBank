@@ -194,6 +194,7 @@ typedef enum {
     APP_ACTION_DOWN,        /* NEXT：单击；菜单：下一项 */
     APP_ACTION_ENTER,       /* CONF：单击；菜单：确认 */
     APP_ACTION_ENTER_DBL,   /* CONF：双击；主界面：开关 WLED */
+    APP_ACTION_DOWN_DBL,    /* NEXT 双击；主界面：小电流/慢充 */
     APP_ACTION_ENTER_HOLD,  /* CONF：长按（持续）；主界面：调光 */
     APP_ACTION_ENTER_HOLD_END, /* CONF：长按结束（HOLD→NONE 边沿）；主界面：切换调光方向 */
 } app_action_t;
@@ -218,6 +219,7 @@ struct menu_app_t {
 
 /* 内置应用（定义在各自 functions 目录的 .c 文件中） */
 extern const menu_app_t menu_app_main;              /* 主界面（待机信息屏） */
+extern const menu_app_t menu_app_sos;               /* SOS */
 extern const menu_app_t menu_app_screen_test;       /* 屏幕测试 */
 extern const menu_app_t menu_app_gravity_calibrate; /* 六面重力校准 */
 

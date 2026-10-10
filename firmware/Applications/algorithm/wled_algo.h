@@ -43,6 +43,7 @@ void WLED_AlgoInit(void);
 /* UI thread: RAM-only requests. */
 void WLED_AlgoRequestToggle(void);
 void WLED_AlgoRequestBrightnessStep(int8_t step);
+void WLED_AlgoRequestSOS(uint8_t enable); /* overrides normal light, never restores */
 
 /* load_task only. */
 void WLED_AlgoTick10ms(void);

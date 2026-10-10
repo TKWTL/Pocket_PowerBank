@@ -54,6 +54,12 @@ static wled_port_cmd_t s_port_cmd;
 /* Cross-task UI requests. */
 static volatile uint8_t s_toggle_request;
 static volatile int16_t s_step_request;
+static volatile uint8_t s_sos_request; /* 1=start, 2=stop */
+static uint8_t s_sos_active;
+static uint8_t s_sos_off_tick;
+static uint32_t s_sos_elapsed_ms;
+/* Morse ... --- ... with 100ms units. */
+static const uint8_t s_sos_pulse_start[] = {0U, 2U, 4U, 8U, 12U, 16U, 22U, 24U, 26U};
 
 /*********************** WLED 亮度映射与温控保护算法开始 ************************/
 /* 用户亮度档位 4~25 先做平方映射 PWM=level²，使低亮度端分辨率更细；
@@ -124,6 +130,7 @@ static void wled_set_pwm_now(uint16_t pwm)
 static void wled_protect_off(void)
 {
     s_protected = 1U;
+    s_sos_active = 0U;
     s_level = 0U;
     s_out = 0U;
     wled_set_pwm_now(0U);
@@ -188,13 +195,27 @@ static void wled_take_ui_requests(void)
     uint8_t toggle;
     int16_t step;
     int32_t level;
+    uint8_t sos_req;
 
     taskENTER_CRITICAL();
+    sos_req = s_sos_request;
+    s_sos_request = 0U;
     toggle = s_toggle_request;
     s_toggle_request = 0U;
     step = s_step_request;
     s_step_request = 0;
     taskEXIT_CRITICAL();
+
+    if (sos_req != 0U) {
+        /* Every SOS start first forces an OFF PWM tick. */
+        wled_set_brightness(0U);
+        s_sos_active = (sos_req == 1U) ? 1U : 0U;
+        s_sos_elapsed_ms = 0U;
+        s_sos_off_tick = 1U;
+        if (s_sos_active != 0U) s_level = WLED_BRIGHTNESS_MAX;
+        return;
+    }
+    if (s_sos_active != 0U) return;
 
     if (toggle != 0U) {
         if (s_level != 0U) {
@@ -368,6 +389,10 @@ void WLED_AlgoInit(void)
 
     s_toggle_request = 0U;
     s_step_request = 0;
+    s_sos_request = 0U;
+    s_sos_active = 0U;
+    s_sos_off_tick = 0U;
+    s_sos_elapsed_ms = 0U;
 }
 
 void WLED_AlgoRequestToggle(void)
@@ -382,6 +407,46 @@ void WLED_AlgoRequestBrightnessStep(int8_t step)
     taskENTER_CRITICAL();
     s_step_request += step;
     taskEXIT_CRITICAL();
+}
+
+void WLED_AlgoRequestSOS(uint8_t enable)
+{
+    taskENTER_CRITICAL();
+    s_sos_request = (enable != 0U) ? 1U : 2U;
+    s_toggle_request = 0U;
+    s_step_request = 0;
+    taskEXIT_CRITICAL();
+}
+
+/* PWM=625 for Morse on pulses. Enforce peak_PWM * total_on_ms /
+ * period <= squared continuous thermal level, with >=5s per cycle.
+ * This increases the OFF gap as the case becomes hot. Hard NTC 60C trip
+ * and zero-capacity shutdown still operate independently. */
+static uint16_t wled_sos_pwm(void)
+{
+    uint32_t period, allowed, unit;
+    uint8_t i;
+
+    if (s_sos_off_tick != 0U) {
+        s_sos_off_tick = 0U;
+        return 0U;
+    }
+    if (!s_path_ok || !wled_sw_mirror_valid() || s_limit == 0U) return 0U;
+
+    allowed = wled_level_to_pwm(s_limit);
+    period = (1500UL * WLED_PWM_MAX + allowed - 1UL) / allowed;
+    if (period < 5000UL) period = 5000UL;
+    unit = s_sos_elapsed_ms / 100U;
+
+    for (i = 0U; i < sizeof(s_sos_pulse_start); i++) {
+        uint8_t begin = s_sos_pulse_start[i];
+        uint8_t len = (i >= 3U && i < 6U) ? 3U : 1U;
+        if (unit >= begin && unit < (uint32_t)begin + len) break;
+    }
+
+    s_sos_elapsed_ms += WLED_ALGO_TICK_MS;
+    if (s_sos_elapsed_ms >= period) s_sos_elapsed_ms = 0U;
+    return (i < sizeof(s_sos_pulse_start)) ? WLED_PWM_MAX : 0U;
 }
 
 void WLED_AlgoTick10ms(void)
@@ -402,6 +467,12 @@ void WLED_AlgoTick10ms(void)
 #else
     (void)changed;
 #endif
+
+    if (s_sos_active != 0U) {
+        target = wled_sos_pwm();
+        if (target != s_pwm) wled_set_pwm_now(target); /* exact Morse edges, no ramp */
+        return;
+    }
 
     target = wled_level_to_pwm(s_out);
     if (target != s_pwm_to) {

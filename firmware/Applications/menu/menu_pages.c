@@ -24,138 +24,148 @@
 /* ---------- 状态页实时信息缓冲区（ui_task 定时更新） ---------- */
 char menu_status_bat[24] = "--.-V --.-A";
 /* ==================== 国际化（i18n） ====================
- * 文案策略：menu_pages.c 里的 label/title/toggle 值保持英文，同时就是字符串键；
- * menu_tr(key) 按当前语言返回显示文本，未配置的键回退 key 本身。
+ * 文案策略：英文文本本身就是 key；表中只保存 key + 中文，英文态不查表。
+ * 中英文完全相同的条目也无需入表，未配置时直接回退英文 key。
  * 表按【菜单顺序】排列，便于核对新增文案是否有对应条目：
  *   根图标页 → About → Status(Battery/Accelerator/Timer) → Tools → Games
  *   → Settings(PowerBank/Display/Sleep & Wake/System)
  *   → PowerBank(Protocol#1/Protocol#2/PowerLimit)
  *   → Display → Sleep & Wake → System(Clock/Language/Factory Option/Reset) → toggle/ENUM 取值
- * 表内每一项都在菜单树或 menu_tr() 里有使用点；新增文案务必同步加条目，
+ * 表中仅保留需要中文替换的文案；中英文相同的字符串不入表，
  * 否则中文态会显示英文（menu_tr 的回退行为）。
  * 中文字库（14/12px 部分字符集）待全部文案确认后生成，生成前切中文缺字形。 */
 static const menu_tr_t menu_tr_table[] = {
     /* ---- 根图标页 ---- */
-    { "Menu",            "Menu",              "菜单" },
-    { "Return",          "Return",            "返回" },
-    { "Settings",        "Settings",          "设置" },
-    { "Status",          "Status",            "状态" },
-    { "Tools",           "Tools",             "工具" },
-    { "Games",           "Games",             "游戏" },
-    { "About",           "About",             "关于" },
+    { "Menu", "菜单" },
+    { "Return", "返回" },
+    { "Settings", "设置" },
+    { "Status", "状态" },
+    { "Tools", "工具" },
+    { "Games", "游戏" },
+    { "About", "关于" },
     /* ---- About WORD页 ---- */
-    { "Pocket PowerBank",       "Pocket PowerBank",       "口袋充电宝" },
-    { "Firmware 1.2.0",         "Firmware 1.2.0",         "固件 1.2.0" },
-    { "AT32F423 + LVGL 9.4",    "AT32F423 + LVGL 9.4",    "AT32F423 + LVGL 9.4" },
-    { "Open Source Hardware",    "Open Source Hardware",   "开源硬件" },
+    { "Pocket PowerBank", "口袋充电宝" },
+    { "Firmware 1.2.0", "固件 1.2.0" },
+    { "Open Source Hardware", "开源硬件" },
     /* ---- Status 页 ---- */
-    { "Battery",         "Battery",           "电池" },
-    { "Accelerator",     "Accelerator",       "加速度" },
-    { "Timer",           "Timer",             "时钟" },
+    { "Battery", "电池" },
+    { "Accelerator", "加速度" },
+    { "Timer", "时钟" },
     /* Status → Battery */
-    { "status.bat",      "%lu.%02luV %lu.%03luA",      "%lu.%02luV %lu.%03luA" },
-    { "status.maxcap",   "Max: %lu.%02lu Wh",          "最大能量: %lu.%02lu Wh" },
-    { "status.now",      "Now: %lu.%02lu Wh",          "当前能量: %lu.%02lu Wh" },
-    { "status.health",   "Health: %lu%%",              "健康度: %lu%%" },
-    { "status.cycles",   "Cycles: %lu.%02lu",          "循环: %lu.%02lu" },
-    { "status.learn",    "Learn:%s",          "容量学习:%s" },
-    { "learn.waiting",   "Waiting",           "等待" },
-    { "learn.ing",       "Learning",          "学习中" },
-    { "learn.done",      "Done",              "已完成" },
-    { "learn.unknown",   "Unknown",           "未知" },
+    { "Max: %lu.%02lu Wh", "最大能量: %lu.%02lu Wh" },
+    { "Now: %lu.%02lu Wh", "当前能量: %lu.%02lu Wh" },
+    { "Health: %lu%%", "健康度: %lu%%" },
+    { "Cycles: %lu.%02lu", "循环: %lu.%02lu" },
+    { "Learn:%s", "容量学习:%s" },
+    { "Waiting", "等待" },
+    { "Learning", "学习中" },
+    { "Done", "已完成" },
+    { "Unknown", "未知" },
     /* Status → Accelerator */
-    { "status.accel_x",  "X: %s%lu.%02lu g",  "X轴: %s%lu.%02lu g" },
-    { "status.accel_y",  "Y: %s%lu.%02lu g",  "Y轴: %s%lu.%02lu g" },
-    { "status.accel_z",  "Z: %s%lu.%02lu g",  "Z轴: %s%lu.%02lu g" },
+    { "X: %s%lu.%02lu g", "X轴: %s%lu.%02lu g" },
+    { "Y: %s%lu.%02lu g", "Y轴: %s%lu.%02lu g" },
+    { "Z: %s%lu.%02lu g", "Z轴: %s%lu.%02lu g" },
     /* Status → Timer */
-    { "status.time",     "%02d:%02d:%02d",   "%02d:%02d:%02d" },
-    { "status.date",     "20%02d-%02d-%02d", "20%02d-%02d-%02d" },
-    { "status.temp",     "Temp: %d°C",       "温度: %d°C" },
-    { "status.vbackup",  "Vbackup: %lu.%02luV",   "备用电池: %lu.%02luV" },
-    { "status.uid",      "ID:0x%02X%02X%02X%02X%02X%02X%02X%02X",
-                         "ID:0x%02X%02X%02X%02X%02X%02X%02X%02X" },
+    { "Temp: %d°C", "温度: %d°C" },
+    { "Vbackup: %lu.%02luV", "备用电池: %lu.%02luV" },
     /* ---- Tools 页 ---- */
-    { "Screen Test",     "Screen Test",      "屏幕测试" },
-    { "Coming Soon",     "Coming Soon",      "敬请期待" },
+    { "Leveler", "水平仪" },
+    { "SOS Blink", "SOS 闪灯" },
+    { "Screen Test", "屏幕测试" },
+    { "Accelerator Calibrate", "加速度计校准" },
+    { "Emergency Light", "紧急闪灯" },
+    { "Function Not Ready", "功能尚未完成" },
+    { "Cycles Solid Colors", "循环显示纯色" },
+    { "Check Pixel Defects", "检查坏点" },
+    { "Accel Calibrate", "加速度计校准" },
+    { "Place Device Level", "将设备水平放置" },
+    { "Keep Device Still", "保持设备静止" },
+    { "Press NEXT to Exit", "按 NEXT 退出" },
+    { "Press CONF to Exit", "按 CONF 退出" },
+    { "Press CONF to Start", "按 CONF 开始" },
+    /* ---- Games 页 ---- */
+    { "Coming Soon", "敬请期待" },
     /* ---- Settings 页（四个子页） ---- */
-    { "PowerBank",       "PowerBank",        "移动电源" },
-    { "Display",         "Display",          "显示" },
-    { "Sleep & Wake",    "Sleep & Wake",     "休眠与唤醒" },
-    { "System",          "System",           "系统" },
+    { "PowerBank", "移动电源" },
+    { "Display", "显示" },
+    { "Sleep & Wake", "休眠与唤醒" },
+    { "System", "系统" },
     /* Settings → PowerBank */
-    { "Protocol#1",      "Protocol#1",       "协议#1" },
-    { "Protocol#2",      "Protocol#2",       "协议#2" },
-    { "PowerLimit",      "PowerLimit",       "功率限制" },
+    { "Protocol#1", "协议#1" },
+    { "Protocol#2", "协议#2" },
+    { "PowerLimit", "功率限制" },
     /* PowerBank → Protocol#1（PD / PPS / UFCS） */
-    { "PD out",          "PD out",           "PD 输出" },
-    { "PD in",           "PD in",            "PD 输入" },
-    { "PPS Broadcast",   "PPS Broadcast",    "PPS 能力播发" },
-    { "11V PPS",         "11V PPS",          "11V PPS" },
-    { "21V PPS",         "21V PPS",          "21V PPS" },
-    { "UFCS Broadcast",  "UFCS Broadcast",   "UFCS 能力播发" },
-    { "UFCS out",        "UFCS out",         "UFCS 输出" },
-    { "UFCS in",         "UFCS in",          "UFCS 输入" },
+    { "PD out", "PD 输出" },
+    { "PD in", "PD 输入" },
+    { "PPS Broadcast", "PPS 能力播发" },
+    { "UFCS Broadcast", "UFCS 能力播发" },
+    { "UFCS out", "UFCS 输出" },
+    { "UFCS in", "UFCS 输入" },
     /* PowerBank → Protocol#2（其它快充协议） */
-    { "QC",              "QC",               "QC" },
-    { "FCP",             "FCP",              "FCP" },
-    { "AFC out",         "AFC out",          "AFC 输出" },
-    { "AFC in",          "AFC in",           "AFC 输入" },
-    { "SCP out",         "SCP out",          "SCP 输出" },
-    { "SCP in",          "SCP in",           "SCP 输入" },
-    { "PE",              "PE",               "PE" },
-    { "SFCP",            "SFCP",             "SFCP" },
-    { "VOOC out",        "VOOC out",         "VOOC 输出" },
-    { "VOOC in",         "VOOC in",          "VOOC 输入" },
-    { "SVOOC",           "SVOOC",            "SVOOC" },
+    { "AFC out", "AFC 输出" },
+    { "AFC in", "AFC 输入" },
+    { "SCP out", "SCP 输出" },
+    { "SCP in", "SCP 输入" },
+    { "VOOC out", "VOOC 输出" },
+    { "VOOC in", "VOOC 输入" },
     /* PowerBank → PowerLimit */
-    { "Output",          "Output",           "输出功率" },
-    { "Input",           "Input",            "输入功率" },
+    { "Output", "输出功率" },
+    { "Input", "输入功率" },
     /* ---- Display 页 ---- */
-    { "Backlight",       "Backlight",        "背光" },
-    { "Theme",           "Theme",            "主题" },
-    { "Color",           "Color",            "颜色" },
-    { "Auto Flip",       "Auto Flip",        "自动翻转" },
-    { "Light",           "Light",            "浅色" },
-    { "Dark",            "Dark",             "深色" },
+    { "Backlight", "背光" },
+    { "Theme", "主题" },
+    { "Color", "颜色" },
+    { "Auto Flip", "自动翻转" },
+    { "Light", "浅色" },
+    { "Dark", "深色" },
     /* ---- Sleep & Wake 页 ---- */
-    { "Auto Sleep",      "Auto Sleep",       "自动休眠" },
-    { "None",            "None",             "不休眠" },
-    { "Pickup Wake",     "Pickup Wake",      "抬起唤醒" },
-    { "Motion Wake",     "Motion Wake",      "运动唤醒" },
-    { "Auto return Homepage","Auto return Homepage","自动回主界面" },
+    { "Auto Sleep", "自动休眠" },
+    { "None", "不休眠" },
+    { "Pickup Wake", "抬起唤醒" },
+    { "Motion Wake", "运动唤醒" },
+    { "Auto return Homepage", "自动回主界面" },
     /* ---- System 页 ---- */
-    { "Clock",           "Clock",            "时钟" },
+    { "Clock", "时钟" },
     /* Clock 子页的页面标题仍是 "Time"（菜单项标签改叫 Clock，页面标题未改） */
-    { "Time",            "Time",             "时间" },
-    { "Language",        "Language",         "语言" },
-    { "Factory Unlock",  "Factory Unlock",   "出厂解锁" },
-    { "Factory Option",  "Factory Option",   "出厂选项" },
-    { "Transport Mode",  "Transport Mode",   "运输模式" },
-    { "Reset",           "Reset",            "复位" },
+    { "Time", "时间" },
+    { "Language", "语言" },
+    { "Factory Unlock", "出厂解锁" },
+    { "Factory Option", "出厂选项" },
+    { "Factory Locked", "出厂选项已锁定" },
+    { "Use Factory Unlock", "请先进行出厂解锁" },
+    { "Enter Password", "输入密码" },
+    { "Waiting...", "等待输入..." },
+    { "Unlocked", "已解锁" },
+    { "Wrong Password", "密码错误" },
+    { "Transport Mode", "运输模式" },
+    { "Outputs Power Off", "关闭全部输出" },
+    { "For Storage/Ship", "用于存储与运输" },
+    { "Reset", "复位" },
     /* System → Clock（原 Settings→Time：SD3078 时间设置 + 后备电池充电） */
-    { "Sec",             "Sec",              "秒" },
-    { "Min",             "Min",              "分" },
-    { "Hour",            "Hour",             "时" },
-    { "Day",             "Day",              "日" },
-    { "Month",           "Month",            "月" },
-    { "Year",            "Year",             "年" },
-    { "Backup Charge",   "Backup Charge",    "备用电池充电" },
+    { "Sec", "秒" },
+    { "Min", "分" },
+    { "Hour", "时" },
+    { "Day", "日" },
+    { "Month", "月" },
+    { "Year", "年" },
+    { "Backup Charge", "备用电池充电" },
     /* System → Factory Option */
-    { "Cycle Clear",     "Cycle Clear",      "循环清零" },
-    { "Record SOH",      "Record SOH",       "记录SOH" },
-    { "RBAT Calibrate",  "RBAT Calibrate",   "RBAT 校准" },
-    /* System → Reset WORD确认页 */
-    { "System Reset",             "System Reset",             "系统复位" },
-    { "All Settings Will Reset",  "All Settings Will Reset",  "所有设置将恢复默认" },
-    { "CONF:RST OTHER:EXIT",  "CONF:RST OTHER:EXIT",  "确认:复位  其他键:退出" },
+    { "Cycle Clear", "循环清零" },
+    { "Record SOH", "记录SOH" },
+    { "RBAT Calibrate", "RBAT 校准" },
+    /* WORD确认页公共提示 + Reset */
+    { "Reset System?", "复位系统？" },
+    { "Settings Will Reset", "所有设置将恢复默认" },
+    { "Factory Data Stays", "保留出厂数据" },
+    { "Press CONF to Reset", "按 CONF 复位" },
     /* ---- ENUM 取值（Clock 页后备电池充电模式） ---- */
-    { "Auto",            "Auto",             "自动" },
+    { "Auto", "自动" },
     /* ---- Toggle 取值（menu_pages.c 的 on/off 文本 + menu_ui 默认值） ---- */
-    { "ON",              "ON",               "开" },
-    { "OFF",             "OFF",              "关" },
-    { "On",              "On",               "开" },
-    { "Off",             "Off",              "关" },
-    { "EDIT",            "EDIT",             "编辑" },
+    { "ON", "开" },
+    { "OFF", "关" },
+    { "On", "开" },
+    { "Off", "关" },
+    { "EDIT", "编辑" },
 };
 
 /* 当前语言（渲染层状态；切语言后调用 menu_notify_changed() 重绘即生效） */
@@ -165,16 +175,15 @@ static const char *menu_tr_key(const char *key)
 {
     unsigned i;
 
-    if (!key) {
-        return key;
+    if (!key || s_menu_lang == MENU_LANG_EN) {
+        return key;   /* key 本身就是英文，英文态无需查表 */
     }
     for (i = 0; i < sizeof(menu_tr_table) / sizeof(menu_tr_table[0]); i++) {
         if (strcmp(menu_tr_table[i].key, key) == 0) {
-            return (s_menu_lang == MENU_LANG_ZH) ? menu_tr_table[i].zh
-                                                 : menu_tr_table[i].en;
+            return menu_tr_table[i].zh;
         }
     }
-    return key;   /* 未配置：回退英文（key 即英文文本） */
+    return key;       /* 未配置或中英文相同：直接使用英文 key */
 }
 
 /* 设置语言（越界值忽略）。切换后由调用方 menu_notify_changed() 触发重绘。 */
@@ -310,6 +319,8 @@ static void auto_flip_apply(menu_item_t *it)
 menu_page_t menu_page_display, menu_page_time, menu_page_powerbank, menu_page_reset;
 menu_page_t menu_page_settings;
 menu_page_t menu_page_sleep_wake, menu_page_system, menu_page_factory_option;
+menu_page_t menu_page_factory_unlock, menu_page_factory_locked, menu_page_transport;
+menu_page_t menu_page_sos, menu_page_screen_test_confirm, menu_page_accel_calibrate;
 menu_page_t menu_page_status;      /* ui_task 用 &menu_page_status 判断当前页 */
 menu_page_t menu_page_status_battery, menu_page_status_accel, menu_page_status_timer;
 menu_page_t menu_page_protocol1, menu_page_protocol2, menu_page_powerlimit;
@@ -484,11 +495,13 @@ static const menu_item_t menu_items_powerbank[] = {
 MENU_PAGE_("PowerBank", menu_page_powerbank, menu_items_powerbank);
 
 /* ==================== Reset WORD_CONFIRM ====================
- * 只恢复用户设置，不清EFC/SOH/硬件校准等隐藏NVM数据。 */
+ * 必须翻到末屏后才能退出/确认；只恢复用户设置，不清EFC/SOH/硬件校准。 */
 static const char * const word_reset[] = {
-    "System Reset",
+    "Reset System?",
     "Settings Will Reset",
-    "CONF:RST OTHER:EXIT",
+    "Factory Data Stays",
+    "Press NEXT to Exit",
+    "Press CONF to Reset",
 };
 MENU_WORD_CONFIRM_(menu_page_reset, word_reset, action_reset_now);
 
@@ -503,14 +516,75 @@ static const menu_item_t menu_items_settings[] = {
 };
 MENU_PAGE_("Settings", menu_page_settings, menu_items_settings);
 
-/* ==================== System 页（三级：时间/出厂/运输/复位） ====================
- * 除 Clock（原 Settings→Time）与 Reset（真实复位）外，其余为占位：
- *  - Factory Unlock：解锁出厂区（未实现）
- *  - Factory Option：Factory Unlock 之后才能进的出厂操作子页
- *  - Transport Mode：运输模式（未实现）
- * Record SOH 从已删除的 PowerBank→Battery 移到这里。 */
-/* Record SOH：把当前库仑计容量记录为 SOH 出厂基准（菜单只发 RAM request）。
- * 原在 PowerBank→Battery 页，该页删除后移到 System→Factory Option。 */
+/* ==================== System 页（三级：时间/出厂/运输/复位） ==================== */
+/* Factory Option 发布版可加锁；开发版 MENU_FACTORY_LOCK_ENABLE=0 时直接开放。
+ * 解锁授权只允许使用一次：成功进入 Factory Option 后立即清除。 */
+static uint8_t s_factory_unlocked;
+static char s_factory_unlock_status[20] = "Waiting...";
+static char s_factory_password_buf[12];
+static uint8_t s_factory_password_len;
+
+static const char * const word_factory_unlock[] = {
+    "Factory Unlock",
+    "Enter Password",
+    s_factory_unlock_status,
+};
+
+static void factory_unlock_check(void)
+{
+    s_factory_password_buf[s_factory_password_len] = '\0';
+    if (strcmp(s_factory_password_buf, "TKWTL114514") == 0) {
+        s_factory_unlocked = 1U;
+        strcpy(s_factory_unlock_status, "Unlocked");
+    } else {
+        s_factory_unlocked = 0U;
+        strcpy(s_factory_unlock_status, "Wrong Password");
+    }
+    s_factory_password_len = 0U;
+    menu_notify_changed();
+}
+
+static void factory_unlock_hook(menu_word_hook_event_t event)
+{
+    uint8_t ch;
+
+    if (event == MENU_WORD_HOOK_ENTER) {
+        s_factory_unlocked = 0U;
+        s_factory_password_len = 0U;
+        strcpy(s_factory_unlock_status, "Waiting...");
+        USART_RxBegin();
+        return;
+    }
+    if (event == MENU_WORD_HOOK_EXIT) {
+        USART_RxEnd();
+        s_factory_password_len = 0U;
+        return;
+    }
+
+    while (s_factory_unlocked == 0U && USART_RxReadByte(&ch)) {
+        pm_api_refresh_idle();   /* 输入过程视为用户活动，避免等待密码时自动黑屏 */
+        if (ch == '\r' || ch == '\n') {
+            if (s_factory_password_len != 0U) factory_unlock_check();
+        } else if (ch == 0x08U || ch == 0x7FU) {
+            if (s_factory_password_len != 0U) s_factory_password_len--;
+        } else if (s_factory_password_len < sizeof(s_factory_password_buf) - 1U) {
+            s_factory_password_buf[s_factory_password_len++] = (char)ch;
+            if (s_factory_password_len == sizeof("TKWTL114514") - 1U) {
+                factory_unlock_check();
+            }
+        }
+    }
+}
+MENU_WORD_ACTION_(menu_page_factory_unlock, word_factory_unlock, factory_unlock_hook);
+
+static const char * const word_factory_locked[] = {
+    "Factory Locked",
+    "Use Factory Unlock",
+    "Press CONF to Exit",
+};
+MENU_WORD_INFO_(menu_page_factory_locked, word_factory_locked);
+
+/* Record SOH：把当前库仑计容量记录为 SOH 出厂基准（菜单只发 RAM request）。 */
 static void record_soh_apply(menu_item_t *it)
 {
     (void)it;
@@ -519,19 +593,41 @@ static void record_soh_apply(menu_item_t *it)
 
 static const menu_item_t menu_items_factory_option[] = {
     MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_ACTION_("Cycle Clear",    placeholder_apply),  /* TODO: 未实现 */
-    MENU_ITEM_ACTION_("Record SOH",     record_soh_apply),   /* 唯一已实现项 */
-    MENU_ITEM_ACTION_("RBAT Calibrate", placeholder_apply),  /* TODO: 未实现 */
+    MENU_ITEM_ACTION_("Cycle Clear",    placeholder_apply),  /* TODO */
+    MENU_ITEM_ACTION_("Record SOH",     record_soh_apply),
+    MENU_ITEM_ACTION_("RBAT Calibrate", placeholder_apply),  /* TODO */
 };
 MENU_PAGE_("Factory Option", menu_page_factory_option, menu_items_factory_option);
+
+static void factory_option_apply(menu_item_t *it)
+{
+    (void)it;
+#if MENU_FACTORY_LOCK_ENABLE
+    if (s_factory_unlocked == 0U) {
+        menu_enter_page(&menu_page_factory_locked);
+        return;
+    }
+#endif
+    menu_enter_page(&menu_page_factory_option);
+    s_factory_unlocked = 0U;   /* 授权只允许进入一次，进入后立即清除 */
+}
+
+static const char * const word_transport[] = {
+    "Transport Mode",
+    "Outputs Power Off",
+    "For Storage/Ship",
+    "Press NEXT to Exit",
+    "Press CONF to Exit",
+};
+MENU_WORD_CONFIRM_(menu_page_transport, word_transport, NULL);
 
 static const menu_item_t menu_items_system[] = {
     MENU_ITEM_BACK_("Return"),
     MENU_ITEM_PAGE_("Clock",           &menu_page_time),
-    MENU_ITEM_ACTION_("Language",      lang_apply),          /* 单击即在中/英之间切换 */
-    MENU_ITEM_ACTION_("Factory Unlock", placeholder_apply),  /* TODO: 未实现 */
-    MENU_ITEM_PAGE_("Factory Option",  &menu_page_factory_option),
-    MENU_ITEM_ACTION_("Transport Mode", placeholder_apply),  /* TODO: 未实现 */
+    MENU_ITEM_ACTION_("Language",      lang_apply),
+    MENU_ITEM_PAGE_("Factory Unlock",  &menu_page_factory_unlock),
+    MENU_ITEM_ACTION_("Factory Option", factory_option_apply),
+    MENU_ITEM_PAGE_("Transport Mode",  &menu_page_transport),
     MENU_ITEM_PAGE_("Reset",           &menu_page_reset),
 };
 MENU_PAGE_("System", menu_page_system, menu_items_system);
@@ -598,12 +694,12 @@ void menu_status_refresh(void)
         uint32_t max_cwh = (uint32_t)(SW6306_ReadMaxEnergy_mWh() * 0.1f + 0.5f);
         uint32_t now_cwh = (uint32_t)(SW6306_ReadRemainEnergy_mWh() * 0.1f + 0.5f);
 
-        mini_snprintf(menu_status_bat, sizeof(menu_status_bat), menu_tr("status.bat"),
+        mini_snprintf(menu_status_bat, sizeof(menu_status_bat), menu_tr("%lu.%02luV %lu.%03luA"),
                  (unsigned long)(vbat_cv / 100U), (unsigned long)(vbat_cv % 100U),
                  (unsigned long)(ibat_ma / 1000U), (unsigned long)(ibat_ma % 1000U));
-        mini_snprintf(menu_status_maxcap, sizeof(menu_status_maxcap), menu_tr("status.maxcap"),
+        mini_snprintf(menu_status_maxcap, sizeof(menu_status_maxcap), menu_tr("Max: %lu.%02lu Wh"),
                  (unsigned long)(max_cwh / 100U), (unsigned long)(max_cwh % 100U));
-        mini_snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), menu_tr("status.now"),
+        mini_snprintf(menu_status_presentcap, sizeof(menu_status_presentcap), menu_tr("Now: %lu.%02lu Wh"),
                  (unsigned long)(now_cwh / 100U), (unsigned long)(now_cwh % 100U));
 
         if (nvm_is_valid()) {
@@ -612,9 +708,9 @@ void menu_status_refresh(void)
             uint32_t soh_i = (soh > 0.0f) ? (uint32_t)(soh + 0.5f) : 0U;
             uint32_t efc_centi = (efc > 0.0f) ? (uint32_t)(efc * 100.0f + 0.5f) : 0U;
 
-            mini_snprintf(menu_status_health, sizeof(menu_status_health), menu_tr("status.health"),
+            mini_snprintf(menu_status_health, sizeof(menu_status_health), menu_tr("Health: %lu%%"),
                      (unsigned long)soh_i);
-            mini_snprintf(menu_status_cycles, sizeof(menu_status_cycles), menu_tr("status.cycles"),
+            mini_snprintf(menu_status_cycles, sizeof(menu_status_cycles), menu_tr("Cycles: %lu.%02lu"),
                      (unsigned long)(efc_centi / 100U), (unsigned long)(efc_centi % 100U));
         } else {
             mini_snprintf(menu_status_health, sizeof(menu_status_health), "--");
@@ -625,12 +721,12 @@ void menu_status_refresh(void)
             sw6306_learn_state_t ls = SW6306_ReadLearnState();
             const char *st;
             switch (ls) {
-            case SW6306_LEARN_ST_WAITING: st = menu_tr("learn.waiting"); break;
-            case SW6306_LEARN_ST_ING:     st = menu_tr("learn.ing");     break;
-            case SW6306_LEARN_ST_DONE:    st = menu_tr("learn.done");    break;
-            default:                      st = menu_tr("learn.unknown"); break;
+            case SW6306_LEARN_ST_WAITING: st = menu_tr("Waiting"); break;
+            case SW6306_LEARN_ST_ING:     st = menu_tr("Learning");     break;
+            case SW6306_LEARN_ST_DONE:    st = menu_tr("Done");    break;
+            default:                      st = menu_tr("Unknown"); break;
             }
-            mini_snprintf(menu_status_learn, sizeof(menu_status_learn), menu_tr("status.learn"), st);
+            mini_snprintf(menu_status_learn, sizeof(menu_status_learn), menu_tr("Learn:%s"), st);
         }
     } else {
         mini_snprintf(menu_status_bat,        sizeof(menu_status_bat),        "--");
@@ -646,7 +742,7 @@ void menu_status_refresh(void)
         float mg[3] = { SC7A20_ReadX_mg(), SC7A20_ReadY_mg(), SC7A20_ReadZ_mg() };
         char *dst[3] = { menu_status_accel_x, menu_status_accel_y, menu_status_accel_z };
         size_t len[3] = { sizeof(menu_status_accel_x), sizeof(menu_status_accel_y), sizeof(menu_status_accel_z) };
-        const char *key[3] = { "status.accel_x", "status.accel_y", "status.accel_z" };
+        const char *key[3] = { "X: %s%lu.%02lu g", "Y: %s%lu.%02lu g", "Z: %s%lu.%02lu g" };
         uint8_t i;
 
         for (i = 0U; i < 3U; i++) {
@@ -668,15 +764,15 @@ void menu_status_refresh(void)
         SD3078_ReadHour() <= 23U && SD3078_ReadMin() <= 59U && SD3078_ReadSec() <= 59U) {
         uint32_t vbackup_cv = ((uint32_t)SD3078_ReadBatt() + 5U) / 10U;
 
-        mini_snprintf(menu_status_time, sizeof(menu_status_time), menu_tr("status.time"),
+        mini_snprintf(menu_status_time, sizeof(menu_status_time), menu_tr("%02d:%02d:%02d"),
                  SD3078_ReadHour(), SD3078_ReadMin(), SD3078_ReadSec());
-        mini_snprintf(menu_status_date, sizeof(menu_status_date), menu_tr("status.date"),
+        mini_snprintf(menu_status_date, sizeof(menu_status_date), menu_tr("20%02d-%02d-%02d"),
                  SD3078_ReadYear(), SD3078_ReadMonth(), SD3078_ReadDay());
-        mini_snprintf(menu_status_temp, sizeof(menu_status_temp), menu_tr("status.temp"),
+        mini_snprintf(menu_status_temp, sizeof(menu_status_temp), menu_tr("Temp: %d°C"),
                  (int)SD3078_ReadTemp());
-        mini_snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), menu_tr("status.vbackup"),
+        mini_snprintf(menu_status_vbackup, sizeof(menu_status_vbackup), menu_tr("Vbackup: %lu.%02luV"),
                  (unsigned long)(vbackup_cv / 100U), (unsigned long)(vbackup_cv % 100U));
-        mini_snprintf(menu_status_uid, sizeof(menu_status_uid), menu_tr("status.uid"),
+        mini_snprintf(menu_status_uid, sizeof(menu_status_uid), menu_tr("ID:0x%02X%02X%02X%02X%02X%02X%02X%02X"),
                  SD3078_ReadID(0), SD3078_ReadID(1), SD3078_ReadID(2), SD3078_ReadID(3),
                  SD3078_ReadID(4), SD3078_ReadID(5), SD3078_ReadID(6), SD3078_ReadID(7));
     } else {
@@ -689,10 +785,45 @@ void menu_status_refresh(void)
 }
 
 /* ==================== 工具页 ==================== */
+static const char * const word_sos[] = {
+    "SOS Blink",
+    "Emergency Light",
+    "Function Not Ready",
+    "Press NEXT to Exit",
+    "Press CONF to Exit",
+};
+MENU_WORD_CONFIRM_(menu_page_sos, word_sos, NULL);
+
+static void screen_test_confirm_apply(menu_item_t *it)
+{
+    (void)it;
+    menu_app_enter(&menu_app_screen_test);
+}
+
+static const char * const word_screen_test[] = {
+    "Screen Test",
+    "Cycles Solid Colors",
+    "Check Pixel Defects",
+    "Press NEXT to Exit",
+    "Press CONF to Start",
+};
+MENU_WORD_CONFIRM_(menu_page_screen_test_confirm, word_screen_test, screen_test_confirm_apply);
+
+static const char * const word_accel_calibrate[] = {
+    "Accel Calibrate",
+    "Place Device Level",
+    "Keep Device Still",
+    "Press NEXT to Exit",
+    "Press CONF to Exit",
+};
+MENU_WORD_CONFIRM_(menu_page_accel_calibrate, word_accel_calibrate, NULL);
+
 static const menu_item_t menu_items_tools[] = {
     MENU_ITEM_BACK_("Return"),
-    MENU_ITEM_APP_("Screen Test", &menu_app_screen_test),   /* 全屏纯色坏区测试 */
-    MENU_ITEM_INFO_("Coming Soon"),
+    MENU_ITEM_ACTION_("Leveler", placeholder_apply),
+    MENU_ITEM_PAGE_("SOS Blink", &menu_page_sos),
+    MENU_ITEM_PAGE_("Screen Test", &menu_page_screen_test_confirm),
+    MENU_ITEM_PAGE_("Accelerator Calibrate", &menu_page_accel_calibrate),
 };
 MENU_PAGE_("Tools", menu_page_tools, menu_items_tools);
 

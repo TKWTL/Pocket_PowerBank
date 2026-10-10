@@ -79,6 +79,10 @@ static int16_t icon_head_center(uint8_t idx)
 
 void menu_open(void)
 {
+    if (s_menu.active && s_menu.page && s_menu.page->type == MENU_PAGE_WORD &&
+        s_menu.page->word_mode == MENU_WORD_ACTION && s_menu.page->word_hook) {
+        s_menu.page->word_hook(MENU_WORD_HOOK_EXIT);
+    }
     s_menu.page    = &menu_page_root;
     s_menu.index   = menu_entry_index(&menu_page_root);  /* 进入菜单：保留上次选中的图标 */
     s_menu.editing = false;
@@ -146,6 +150,10 @@ void menu_app_exit(void)
 
 void menu_close(void)
 {
+    if (s_menu.active && s_menu.page && s_menu.page->type == MENU_PAGE_WORD &&
+        s_menu.page->word_mode == MENU_WORD_ACTION && s_menu.page->word_hook) {
+        s_menu.page->word_hook(MENU_WORD_HOOK_EXIT);
+    }
     s_menu.active  = false;
     s_menu.editing = false;
     s_menu.nav_dir = -1;
@@ -172,8 +180,7 @@ bool menu_has_prev(void)
 {
     if (!s_menu.page) return false;
     if (s_menu.page->type == MENU_PAGE_WORD) {
-        return (s_menu.page->word_mode == MENU_WORD_INFO) &&
-               (s_menu.page->word_top > 0U);
+        return s_menu.page->word_top > 0U;
     }
     return s_menu.page->item_count > 1U;
 }
@@ -182,8 +189,8 @@ bool menu_has_next(void)
 {
     if (!s_menu.page) return false;
     if (s_menu.page->type == MENU_PAGE_WORD) {
-        return (s_menu.page->word_mode == MENU_WORD_INFO) &&
-               ((uint16_t)s_menu.page->word_top + 3U < s_menu.page->word_line_count);
+        if (s_menu.page->word_mode == MENU_WORD_CONFIRM) return true; /* 末页NEXT=Exit */
+        return (uint16_t)s_menu.page->word_top + 3U < s_menu.page->word_line_count;
     }
     return s_menu.page->item_count > 1U;
 }
@@ -197,6 +204,7 @@ const menu_item_t *menu_current_item(void)
 
 static void push_page(menu_page_t *pg)
 {
+    if (!pg) return;
     if (s_menu.depth < MENU_STACK_DEPTH) {
         s_menu.stack[s_menu.depth++] = s_menu.page;
     }
@@ -206,7 +214,12 @@ static void push_page(menu_page_t *pg)
     s_menu.page    = pg;
     s_menu.index   = menu_entry_index(pg);
     pg->last_index = s_menu.index;
-    if (pg->type == MENU_PAGE_WORD) pg->word_top = 0U;
+    if (pg->type == MENU_PAGE_WORD) {
+        pg->word_top = 0U;
+        if (pg->word_mode == MENU_WORD_ACTION && pg->word_hook) {
+            pg->word_hook(MENU_WORD_HOOK_ENTER);
+        }
+    }
     s_menu.editing = false;
     s_menu.nav_dir = 1;                /* 前进 */
     /* 子页若是图标页，重置滚动位置为选中项居中 */
@@ -217,6 +230,10 @@ static void push_page(menu_page_t *pg)
 
 static void pop_page(void)
 {
+    if (s_menu.page && s_menu.page->type == MENU_PAGE_WORD &&
+        s_menu.page->word_mode == MENU_WORD_ACTION && s_menu.page->word_hook) {
+        s_menu.page->word_hook(MENU_WORD_HOOK_EXIT);
+    }
     if (s_menu.depth > 0) {
         menu_page_t *parent = s_menu.stack[--s_menu.depth];
         s_menu.page  = parent;
@@ -225,6 +242,22 @@ static void pop_page(void)
     }
     s_menu.editing = false;
     s_menu.nav_dir = -1;               /* 后退 */
+}
+
+void menu_enter_page(menu_page_t *pg)
+{
+    if (!s_menu.active || !pg) return;
+    push_page(pg);
+    request_redraw();
+}
+
+void menu_process(void)
+{
+    menu_page_t *pg = s_menu.page;
+    if (s_menu.active && pg && pg->type == MENU_PAGE_WORD &&
+        pg->word_mode == MENU_WORD_ACTION && pg->word_hook) {
+        pg->word_hook(MENU_WORD_HOOK_TICK);
+    }
 }
 
 /* UI 层滚动图标页时更新 head_x（供记忆/恢复使用） */
@@ -246,17 +279,28 @@ void menu_handle_key(uint32_t lv_key)
     /* --- WORD独立按键语义：完全绕过TEXT条目导航 --- */
     if (s_menu.page && s_menu.page->type == MENU_PAGE_WORD) {
         menu_page_t *pg = s_menu.page;
+        uint8_t at_end = ((uint16_t)pg->word_top + 3U >= pg->word_line_count) ? 1U : 0U;
 
         if (pg->word_mode == MENU_WORD_CONFIRM) {
-            if (lv_key == LV_KEY_ENTER) {
-                if (pg->word_action) pg->word_action(NULL);
-                /* action若返回（例如保存失败），继续停在确认页。 */
-            } else if (lv_key == LV_KEY_PREV || lv_key == LV_KEY_NEXT) {
+            /* 确认页必须读到最后一屏。到末屏前 CONF 无效，只允许 PREV/NEXT 翻页；
+             * 到末屏后 NEXT=Exit，CONF=退出页面后执行动作（NULL则仅退出）。 */
+            if (lv_key == LV_KEY_NEXT) {
+                if (at_end) {
+                    pop_page();
+                } else {
+                    pg->word_top++;
+                }
+            } else if (lv_key == LV_KEY_PREV) {
+                if (pg->word_top > 0U) pg->word_top--;
+            } else if (lv_key == LV_KEY_ENTER && at_end) {
+                menu_action_fn action = pg->word_action;
                 pop_page();
+                if (action) action(NULL);
             }
         } else {
+            /* INFO/ACTION：有边界滚动；CONF 随时返回。ACTION 的后台hook由 menu_process() 驱动。 */
             if (lv_key == LV_KEY_NEXT) {
-                if ((uint16_t)pg->word_top + 3U < pg->word_line_count) pg->word_top++;
+                if (!at_end) pg->word_top++;
             } else if (lv_key == LV_KEY_PREV) {
                 if (pg->word_top > 0U) pg->word_top--;
             } else if (lv_key == LV_KEY_ENTER) {

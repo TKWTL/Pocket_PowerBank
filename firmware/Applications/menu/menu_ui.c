@@ -229,8 +229,8 @@ static void fmt_item_text(const menu_item_t *it, bool editing, bool selected, ch
  * 宽度只按当前字体的英文单字宽计算，与实际字符串（尤其中文）无关：
  *   - 静止角落 + 动画中的四个可见 label：12 个英文字符宽，DOTS；
  *   - 静止中心 label：14 个英文字符宽，超长时 SCROLL_CIRCULAR；
- *   - VALUE/ENUM 编辑态：明确关闭滚动，临时用整屏固定宽度静态显示，
- *     避免 "Auto Sleep: 30s *" 调值时文字持续移动。 */
+ *   - TOGGLE/ENUM/VALUE 设置项：无论是否编辑都禁止滚动，使用整屏固定宽度 CLIP；
+ *   - 其它普通条目选中时才允许 SCROLL_CIRCULAR。 */
 #define MENU_TEXT_CORNER_CHARS   12U
 #define MENU_TEXT_CENTER_CHARS   14U
 
@@ -301,16 +301,24 @@ static void transit_set_text(lv_obj_t *lbl, const char *text)
 
 /* 中心静止角色。普通状态固定 14 英文字宽并循环滚动。
  * 编辑态是特例：关闭滚动，使用屏幕内容宽静态显示当前值和 "*"。 */
-static void center_set_text(lv_obj_t *lbl, const char *text, uint8_t editing)
+static uint8_t item_no_scroll(const menu_item_t *it, bool editing)
+{
+    if (editing) return 1U;
+    if (!it) return 0U;
+    return (it->type == MENU_ITEM_TOGGLE ||
+            it->type == MENU_ITEM_ENUM ||
+            it->type == MENU_ITEM_VALUE) ? 1U : 0U;
+}
+
+static void center_set_text(lv_obj_t *lbl, const char *text, uint8_t no_scroll)
 {
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    if (editing != 0U) {
+    if (no_scroll != 0U) {
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_MODE_CLIP);
         lv_obj_set_width(lbl, MENU_SCR_W - 2 * MENU_CORNER_X);
     } else {
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
         lv_obj_set_width(lbl, menu_fixed_text_w(lbl, MENU_TEXT_CENTER_CHARS));
-        /* 只给滚动角色设速度；编辑态是 CLIP，不滚，设了也无影响 */
         lv_obj_set_style_anim_duration(lbl, MENU_SCROLL_ANIM_TIME, 0);
     }
     lv_label_set_text(lbl, text ? text : "");
@@ -474,7 +482,7 @@ static void snap_static(const menu_page_t *pg, uint8_t index)
 
     if (pg && index < pg->item_count) {
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
-        center_set_text(s_item, buf, menu_get_state()->editing ? 1U : 0U);
+        center_set_text(s_item, buf, item_no_scroll(&pg->items[index], menu_get_state()->editing));
         item_recenter(s_item);
         lv_obj_set_y(s_item, MENU_ROW_MID_Y);
         /* 选中项高亮色：选中 Return 用白色，其余普通文字色（"<" 与文字同一 label） */
@@ -662,7 +670,7 @@ static void slide_commit_next(const menu_page_t *pg, uint8_t index)
     /* 角色变了要补静止态的"内容"：中间项换完整格式并恢复高亮，角落补齐文本+颜色 */
     if (n > 0 && index < n) {
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
-        center_set_text(s_item, buf, menu_get_state()->editing ? 1U : 0U);
+        center_set_text(s_item, buf, item_no_scroll(&pg->items[index], menu_get_state()->editing));
         /* 落定高亮：选中 Return 用白色，其余用普通文字色（"<" 与文字同一 label） */
         lv_obj_set_style_text_color(s_item, item_selected_color(&pg->items[index]), 0);
         /* 必须重新居中：动画期间中间项按【未选中简格式】文本宽度定位，
@@ -721,7 +729,7 @@ static void slide_commit_prev(const menu_page_t *pg, uint8_t index)
 
     if (n > 0 && index < n) {
         fmt_item_text(&pg->items[index], menu_get_state()->editing, true, buf, sizeof(buf));
-        center_set_text(s_item, buf, menu_get_state()->editing ? 1U : 0U);
+        center_set_text(s_item, buf, item_no_scroll(&pg->items[index], menu_get_state()->editing));
         lv_obj_set_style_text_color(s_item, item_selected_color(&pg->items[index]), 0);
         /* 同 NEXT：换完整格式后必须重新居中（动画期间是按简格式宽度定位的） */
         item_recenter(s_item);

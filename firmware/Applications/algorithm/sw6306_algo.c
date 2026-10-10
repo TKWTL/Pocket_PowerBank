@@ -34,7 +34,7 @@ sw6306_algo_config_t SW6306_AlgoConfig = {
     1U, 1U,             /* VOOC out/in */
     1U,                 /* SVOOC */
     1U, 1U,             /* UFCS out/in */
-    45, 30              /* output/input W */
+    55, 30              /* output/input W */
 };
 
 /***************************** 通用命令请求机制开始 *****************************/
@@ -127,7 +127,10 @@ void SW6306_AlgoLoadStep(void)
             if (++s_capacity_cycle >= 2U) {
                 s_capacity_cycle = 0U;
                 SW6306_CapacityLoad();
-                SW6306_AlgoUpdate();
+                /* 失败时镜像仍是旧数据，不允许用 stale capacity 推进学习/EFC。 */
+                if (SW6306_CapacityLoadOK() != 0U) {
+                    SW6306_AlgoUpdate();
+                }
             }
         }
         break;
@@ -149,6 +152,7 @@ void SW6306_AlgoLoadAll(void)
     SW6306_PortStatusLoad();
     SW6306_PowerLoad();
     if (SW6306_ValidateInitialized() != 0U) {
+        /* 唤醒预取只刷新镜像；成功/失败都不推进学习或EFC状态机。 */
         SW6306_CapacityLoad();
     }
 }

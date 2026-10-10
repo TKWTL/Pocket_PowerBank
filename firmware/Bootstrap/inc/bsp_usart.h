@@ -16,11 +16,20 @@ extern "C" {
 #define DUART           USART1
 #define DUART_DMATX_CH  DMA1_CHANNEL6
 #define DUART_TX_FDT    DMA1_FDT6_FLAG
+#define DUART_DMARX_CH  DMA1_CHANNEL7
+#define DUART_RX_FDT    DMA1_FDT7_FLAG
+
+#define BSP_USART_RX_BUF_SIZE   16U
 
 void USART_SendByte(uint8_t data);
 void USART_SendString(const char *str);
 void USART_Printf(const char *format, ...);
 void USART_TxIRQHandler(void);
+
+/* 临时交互输入：进入页面时启用16B循环DMA，离开页面即关闭。 */
+void USART_RxBegin(void);
+void USART_RxEnd(void);
+uint8_t USART_RxReadByte(uint8_t *data);
 
 #ifdef __cplusplus
 }

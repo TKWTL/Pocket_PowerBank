@@ -56,9 +56,18 @@ typedef enum {
 } menu_page_type_t;
 
 typedef enum {
-    MENU_WORD_INFO = 0,   /* PREV/NEXT有边界滚动，CONF返回 */
-    MENU_WORD_CONFIRM     /* CONF执行，PREV/NEXT退出；建议<=3行 */
+    MENU_WORD_INFO = 0,   /* PREV/NEXT有边界滚动，CONF随时返回 */
+    MENU_WORD_CONFIRM,    /* 必须翻到末页；末页NEXT退出、CONF执行/退出 */
+    MENU_WORD_ACTION      /* INFO按键语义 + 页面驻留期间循环执行hook */
 } menu_word_mode_t;
+
+typedef enum {
+    MENU_WORD_HOOK_ENTER = 0,
+    MENU_WORD_HOOK_TICK,
+    MENU_WORD_HOOK_EXIT
+} menu_word_hook_event_t;
+
+typedef void (*menu_word_hook_fn)(menu_word_hook_event_t event);
 
 /* 图标页条目：图标 + 标签（与 items 数组一一对应） */
 typedef struct {
@@ -104,7 +113,8 @@ struct menu_page_t {
     uint8_t word_line_count;        /* WORD：逻辑行数 */
     uint8_t word_top;               /* WORD_INFO：3行窗口首行 */
     uint8_t word_mode;              /* menu_word_mode_t */
-    menu_action_fn word_action;     /* WORD_CONFIRM：CONF动作，可NULL */
+    menu_action_fn word_action;     /* WORD_CONFIRM：末页CONF动作，可NULL */
+    menu_word_hook_fn word_hook;    /* WORD_ACTION：ENTER/TICK/EXIT hook */
 };
 
 /* ==================== 菜单配置宏（集中声明菜单树用） ====================
@@ -132,19 +142,22 @@ struct menu_page_t {
 #define MENU_PAGE_(title, var, items) \
     menu_page_t var = { (title), (items), \
         (uint8_t)(sizeof(items) / sizeof((items)[0])), 0, MENU_PAGE_TEXT, 0, NULL, \
-        NULL, 0, 0, MENU_WORD_INFO, NULL }
+        NULL, 0, 0, MENU_WORD_INFO, NULL, NULL }
 /* 图标页定义 */
 #define MENU_PAGE_ICON_(title, var, items, icons) \
     menu_page_t var = { (title), (items), \
         (uint8_t)(sizeof(items) / sizeof((items)[0])), 0, MENU_PAGE_ICON, 0, (icons), \
-        NULL, 0, 0, MENU_WORD_INFO, NULL }
+        NULL, 0, 0, MENU_WORD_INFO, NULL, NULL }
 /* WORD页：独立全屏3行文本窗口，不复用TEXT布局/动画。 */
 #define MENU_WORD_INFO_(var, lines) \
     menu_page_t var = { NULL, NULL, 0, 0, MENU_PAGE_WORD, 0, NULL, \
-        (lines), (uint8_t)(sizeof(lines) / sizeof((lines)[0])), 0, MENU_WORD_INFO, NULL }
+        (lines), (uint8_t)(sizeof(lines) / sizeof((lines)[0])), 0, MENU_WORD_INFO, NULL, NULL }
 #define MENU_WORD_CONFIRM_(var, lines, fn) \
     menu_page_t var = { NULL, NULL, 0, 0, MENU_PAGE_WORD, 0, NULL, \
-        (lines), (uint8_t)(sizeof(lines) / sizeof((lines)[0])), 0, MENU_WORD_CONFIRM, (fn) }
+        (lines), (uint8_t)(sizeof(lines) / sizeof((lines)[0])), 0, MENU_WORD_CONFIRM, (fn), NULL }
+#define MENU_WORD_ACTION_(var, lines, hook) \
+    menu_page_t var = { NULL, NULL, 0, 0, MENU_PAGE_WORD, 0, NULL, \
+        (lines), (uint8_t)(sizeof(lines) / sizeof((lines)[0])), 0, MENU_WORD_ACTION, NULL, (hook) }
 
 #define MENU_STACK_DEPTH 8
 
@@ -166,6 +179,8 @@ bool menu_is_active(void);
 void menu_open(void);
 void menu_open_last(void);   /* 恢复到菜单关闭前的页面（功能界面退出后回到原菜单页） */
 void menu_close(void);
+void menu_enter_page(menu_page_t *pg); /* 动作回调动态进入页面（Factory gate等） */
+void menu_process(void);                /* 每个UI循环执行WORD_ACTION hook */
 /* ---------- 统一按键动作（仿 MiaoUI UI_ACTION） ----------
  * 物理按键在 UI 调度层一次性映射为语义化动作；菜单系统与
  * 功能界面各自解释动作，互不耦合、便于按界面定制。
@@ -236,8 +251,7 @@ void menu_page_set_head_x(int16_t x);
  *  - 中文态查表返回 zh，未配置的键回退 key 本身。
  * 中文字库（14/12px 部分字符集）待全部文案确认后生成，生成前切中文缺字形。 */
 typedef struct {
-    const char *key;   /* 字符串键（= 英文文本） */
-    const char *en;    /* 英文显示文本 */
+    const char *key;   /* 字符串键，同时就是英文显示文本 */
     const char *zh;    /* 中文显示文本 */
 } menu_tr_t;
 

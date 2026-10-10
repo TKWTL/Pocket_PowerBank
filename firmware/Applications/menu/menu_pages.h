@@ -9,6 +9,11 @@
 
 #include "menu.h"
 
+/* 开发固件默认直接开放 Factory Option；面向用户的发布构建改为 1。 */
+#ifndef MENU_FACTORY_LOCK_ENABLE
+#define MENU_FACTORY_LOCK_ENABLE 0U
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

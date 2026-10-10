@@ -9,6 +9,10 @@ static volatile uint16_t tx_head;
 static volatile uint16_t tx_tail;
 static volatile uint16_t tx_active_len;   /* 当前 DMA 正在发送的长度 */
 
+static uint8_t s_rx_buf[BSP_USART_RX_BUF_SIZE];
+static uint16_t s_rx_read;
+static uint8_t s_rx_active;
+
 /* 启动 DMA 搬运下一段连续数据 */
 static void usart_start_tx_dma(void)
 {
@@ -101,4 +105,39 @@ void USART_TxIRQHandler(void)
         tx_head = (tx_head + tx_active_len) & (BSP_USART_TX_BUF_SIZE - 1);
         usart_start_tx_dma();
     }
+}
+
+void USART_RxBegin(void)
+{
+    dma_channel_enable(DUART_DMARX_CH, FALSE);
+    dma_flag_clear(DUART_RX_FDT);
+    DUART_DMARX_CH->paddr = (uint32_t)&DUART->dt;
+    DUART_DMARX_CH->maddr = (uint32_t)s_rx_buf;
+    DUART_DMARX_CH->ctrl_bit.lm = TRUE;
+    dma_data_number_set(DUART_DMARX_CH, BSP_USART_RX_BUF_SIZE);
+    s_rx_read = 0U;
+    s_rx_active = 1U;
+    dma_channel_enable(DUART_DMARX_CH, TRUE);
+}
+
+void USART_RxEnd(void)
+{
+    s_rx_active = 0U;
+    dma_channel_enable(DUART_DMARX_CH, FALSE);
+    DUART_DMARX_CH->ctrl_bit.lm = FALSE;
+}
+
+uint8_t USART_RxReadByte(uint8_t *data)
+{
+    uint16_t write;
+
+    if (!data || s_rx_active == 0U) return 0U;
+
+    write = (uint16_t)(BSP_USART_RX_BUF_SIZE - dma_data_number_get(DUART_DMARX_CH));
+    if (write >= BSP_USART_RX_BUF_SIZE) write = 0U;
+    if (s_rx_read == write) return 0U;
+
+    *data = s_rx_buf[s_rx_read++];
+    if (s_rx_read >= BSP_USART_RX_BUF_SIZE) s_rx_read = 0U;
+    return 1U;
 }

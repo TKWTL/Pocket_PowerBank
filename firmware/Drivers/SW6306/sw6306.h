@@ -92,15 +92,15 @@ extern C {
 #define SW6306_PD_9V_FIX_CURR           5000U       //PD 9V Fix电流（必须是10的倍数）
 #define SW6306_PD_12V_FIX_CURR          3600U       //PD 12V Fix电流（必须是10的倍数）
 #define SW6306_PD_15V_FIX_CURR          3000U       //PD 15V Fix电流（必须是10的倍数）
-#define SW6306_PD_20V_FIX_CURR          2000U       //PD 20V Fix电流（必须是10的倍数）
+#define SW6306_PD_20V_FIX_CURR          2000U       //PD 20V Fix绝对上限2A；运行时还随POSET降低
 #define SW6306_PD_PPS0_CURR             5000U       //PD PPS0电流（最大6V）（必须是50的倍数）（单位：mA）（最大5000）
 #define SW6306_PD_PPS1_CURR             5000U       //PD PPS1电流（最大11V）（必须是50的倍数）
 #define SW6306_PD_PPS2_CURR             3000U       //PD PPS2电流（最大16V）（必须是50的倍数）
-#define SW6306_PD_PPS3_CURR             2000U       //PD PPS3电流（最大21V）（必须是50的倍数）
+#define SW6306_PD_PPS3_CURR             2000U       //PD PPS3(21V)绝对上限2A；运行时还随POSET降低
 //UFCS各电流挡位设置
 #define SW6306_UFCS_5V_MAX_MA           5000U       //UFCS source 5V可编程档位最大电流（必须是50的倍数）
 #define SW6306_UFCS_10V_MAX_MA          5000U       //UFCS source 10V可编程档位最大电流（必须是50的倍数）
-#define SW6306_UFCS_20V_MAX_MA          2000U       //UFCS source 20V可编程档位最大电流（必须是50的倍数）
+#define SW6306_UFCS_20V_MAX_MA          2000U       //UFCS高压(约21V)绝对上限2A；运行时还随POSET降低
 
 /******************************用户设置区结束**********************************/
 //操作语法宏，方便添加freeRTOS之类的支持
@@ -176,6 +176,7 @@ struct SW6306_StatusTypedef
     uint32_t presentcap;            //0x88~0x8A 库伦计当前容量
     uint8_t capacity;               //0x99 显示电量
     uint8_t learn_stat;             //0xA2 容量学习状态指示
+    uint8_t capacity_load_ok;       //最近一次 CapacityLoad 是否完整成功
     
     //设置寄存器存档
     uint8_t pimax_set;              //0x45 最大输入功率
@@ -1397,6 +1398,7 @@ SW6306_RET SW6306_PPSBroadcast(SW6306_NOARG);   //手动触发 PD/PPS 电流能�
 SW6306_RET SW6306_UFCSBroadcast(SW6306_NOARG);  //手动触发 UFCS 电流能力播发（Source Capability 重播）
 //容量与库仑计相关操作
 SW6306_RET SW6306_CapacityLoad(SW6306_NOARG); //更新容量与库仑计镜像寄存器(0x86~0x8A,0x99,0xA2)
+uint8_t SW6306_CapacityLoadOK(void);            //最近一次 CapacityLoad 全部读成功
 uint8_t SW6306_ReadCapacity(void);              //读取SW6306显示电量
 float SW6306_ReadMaxEnergy_mWh(void);           //读取库仑计最大能量（单位：mWh）
 float SW6306_ReadRemainEnergy_mWh(void);        //读取库仑计当前（剩余）能量（单位：mWh）

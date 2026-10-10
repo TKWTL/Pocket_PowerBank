@@ -153,7 +153,11 @@ static app_action_t s_last_action = APP_ACTION_NONE;   /* CONF 长按结束边�
 
 static void ui_loop(void)
 {
-    app_action_t action = ui_scan_action();
+    app_action_t action;
+
+    /* WORD_ACTION 页面驻留期间每个UI循环执行后台hook，与按键事件无关。 */
+    menu_process();
+    action = ui_scan_action();
 
     /* CONF 长按结束边沿：上次 ENTER_HOLD、本次非 ENTER_HOLD（HOLD→NONE）→ ENTER_HOLD_END */
     if (!menu_is_active() && s_app_run) {

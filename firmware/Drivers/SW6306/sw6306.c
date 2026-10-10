@@ -9,6 +9,10 @@ static struct SW6306_StatusTypedef SW6306_Status;//SW6306状态全局变量
 
 static uint8_t s_pomax_target = SW6306_OUTPUT_POWER_MAX;   // 运行时最大输出功率目标（W），Init 写入、可由 SetMaxOutputPower 修改
 
+/* 功率设置会立即重算并重播协议电流能力；实现定义在初始化区。 */
+static SW6306_RET SW6306_PDCurrentSet(SW6306_NOARG);
+static SW6306_RET SW6306_UFCSCurrentSet(SW6306_NOARG);
+
 /* 电池端感测电阻校准值（mΩ）：初值 = SW_BATT_RSHUNT（实际硬件值），可由 SW6306_SetBattRShunt 重新校准。
  * 芯片按 SW6306_BATT_RSHUNT_NOMINAL(5mΩ) 标定，实际电阻不同时按比例换算：
  *  - 电流/能量读数 × (NOMINAL / s_batt_rshunt)
@@ -520,32 +524,37 @@ SW6306_RET SW6306_ClearEvents(SW6306_ARGS(uint8_t events))//写1清除REG0x15已
 
 SW6306_RET SW6306_CapacityLoad(SW6306_NOARG)//更新容量与库仑计镜像寄存器(0x86~0x8A,0x99,0xA2)
 {
-    uint8_t t[7];                    /* 读缓冲：失败时镜像保持上一次有效值 */
+    uint8_t t[7];
+    uint8_t ok = 1U;
     SW6306_FUNC_BEGIN;
+    SW6306_Status.capacity_load_ok = 0U;
     SW6306_MUTEX_TAKE;
 
-    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_BATLVL_DISPLAY);//切换低地址
-    /* 0x99 显示电量、0xA2 学习状态、0x86/0x87 最大容量（分开读，见下）、0x88~0x8A 当前容量（3B） */
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_STRG_BATLVL_DISPLAY);
     if(SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_BATLVL_DISPLAY, &t[0], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
        || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_STRG_LEARN, &t[1], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
-       /* 0x86~0x87：最大容量（12 位：0x86 为低 8 位，0x87 低 4 位为高 4 位；0x87 高 4 位保留）。
-        * 不能连续读 2 字节进小端 uint16（会把 0x87 完整 8 位当高位），必须单独组合。 */
        || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_GAUGE_MCAPL, &t[2], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
        || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_GAUGE_MCAPH, &t[3], 1, (uint8_t*)&SW6306_Status.flag) != I2C_OK
-       /* 0x88~0x8A：当前容量（3B） */
-       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_CURR_CAPL, &t[4], 3, (uint8_t*)&SW6306_Status.flag) != I2C_OK)
-    {
-        SW6306_MARK_OFFLINE_ON_I2C_FAIL();   /* I2C 失败（已整笔重试过）：当前由开关临时屏蔽 */
-        SW6306_MUTEX_GIVE;
-        SW6306_FUNC_END;
+       || SW6306_I2C_Receive(SW6306_I2C_ADDR, SW6306_CTRG_CURR_CAPL, &t[4], 3, (uint8_t*)&SW6306_Status.flag) != I2C_OK) {
+        SW6306_MARK_OFFLINE_ON_I2C_FAIL();
+        ok = 0U;
     }
-    SW6306_Status.capacity   = t[0];//0x99
-    SW6306_Status.learn_stat = t[1];//0xA2
-    SW6306_Status.maxcap     = (uint16_t)(((uint16_t)(t[3] & 0x0F) << 8) | t[2]);
-    SW6306_Status.presentcap = (uint32_t)t[4] | ((uint32_t)t[5] << 8) | ((uint32_t)t[6] << 16);
+
+    if (ok != 0U) {
+        SW6306_Status.capacity   = t[0];
+        SW6306_Status.learn_stat = t[1];
+        SW6306_Status.maxcap     = (uint16_t)(((uint16_t)(t[3] & 0x0FU) << 8) | t[2]);
+        SW6306_Status.presentcap = (uint32_t)t[4] | ((uint32_t)t[5] << 8) | ((uint32_t)t[6] << 16);
+        SW6306_Status.capacity_load_ok = 1U;
+    }
 
     SW6306_MUTEX_GIVE;
     SW6306_FUNC_END;
+}
+
+uint8_t SW6306_CapacityLoadOK(void)
+{
+    return SW6306_Status.capacity_load_ok;
 }
          
 uint8_t SW6306_ReadCapacity(void)//读取SW6306显示电量
@@ -651,9 +660,8 @@ SW6306_RET SW6306_Unlock_Nolock(SW6306_NOARG)
     SW6306_FUNC_END;
 }
 
-/* 设置最大输出功率（单位W，如45/18；最大100W）。
- * 解锁并写入 POSET(0x4F)，同步更新镜像与运行时目标值。
- * 注意：新功率在下次插拔/重新协商后才完全生效。 */
+/* 设置最大输出功率（单位W，最大100W）。
+ * 写 POSET 后立即按新功率重算 PD/PPS/UFCS Source 电流并重播能力。 */
 SW6306_RET SW6306_SetMaxOutputPower(SW6306_ARGS(uint8_t watt))
 {
     SW6306_FUNC_BEGIN;
@@ -663,6 +671,10 @@ SW6306_RET SW6306_SetMaxOutputPower(SW6306_ARGS(uint8_t watt))
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_POSET, watt);
     SW6306_Status.pomax_set = watt;
     s_pomax_target = watt;
+    /* 功率设置与协议能力同步：高压20/21V档<=2A，低于40W继续按功率降低；
+     * 其它档位不套2A上限，只按各档原上限与POSET折算。 */
+    SW6306_SPAWN_NOARG(SW6306_PDCurrentSet);
+    SW6306_SPAWN_NOARG(SW6306_UFCSCurrentSet);
     SW6306_MUTEX_GIVE;
     SW6306_FUNC_END;
 }
@@ -1047,77 +1059,111 @@ SW6306_RET SW6306_IbusForceCtrlSet(SW6306_ARGS(uint8_t status))//设置是否强
 }
 
 /********************************初始化区**************************************/
+static uint16_t sw6306_power_current_ma(uint8_t watt, uint16_t voltage_mv,
+                                               uint16_t max_ma, uint16_t step_ma,
+                                               uint8_t high_voltage_2a)
+{
+    uint32_t ma;
+
+    /* 20/21V 三个高压档：>=40W 也最多2A；<40W按20V基准同步降低。
+     * 其它档位不套2A上限，只受POSET对应功率和各档原始最大电流约束。 */
+    if (high_voltage_2a) {
+        ma = (watt >= 40U) ? 2000UL : (uint32_t)watt * 50UL;
+    } else {
+        ma = (uint32_t)watt * 1000000UL / voltage_mv;
+    }
+    if (ma > max_ma) ma = max_ma;
+    ma = (ma / step_ma) * step_ma;
+    if (ma < step_ma) ma = step_ma;
+    return (uint16_t)ma;
+}
+
+static SW6306_RET SW6306_PDCurrentSet(SW6306_NOARG)
+{
+    uint16_t i5   = sw6306_power_current_ma(s_pomax_target,  5000U, SW6306_PD_5V_FIX_CURR,  10U, 0U);
+    uint16_t i9   = sw6306_power_current_ma(s_pomax_target,  9000U, SW6306_PD_9V_FIX_CURR,  10U, 0U);
+    uint16_t i12  = sw6306_power_current_ma(s_pomax_target, 12000U, SW6306_PD_12V_FIX_CURR, 10U, 0U);
+    uint16_t i15  = sw6306_power_current_ma(s_pomax_target, 15000U, SW6306_PD_15V_FIX_CURR, 10U, 0U);
+    uint16_t i20  = sw6306_power_current_ma(s_pomax_target, 20000U, SW6306_PD_20V_FIX_CURR, 10U, 1U);
+    uint16_t pps0 = sw6306_power_current_ma(s_pomax_target,  6000U, SW6306_PD_PPS0_CURR, 50U, 0U);
+    uint16_t pps1 = sw6306_power_current_ma(s_pomax_target, 11000U, SW6306_PD_PPS1_CURR, 50U, 0U);
+    uint16_t pps2 = sw6306_power_current_ma(s_pomax_target, 16000U, SW6306_PD_PPS2_CURR, 50U, 0U);
+    uint16_t pps3 = sw6306_power_current_ma(s_pomax_target, 21000U, SW6306_PD_PPS3_CURR, 50U, 1U);
+    SW6306_FUNC_BEGIN;
+
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_PD5);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD5, (i5 / 10U) & 0xFFU);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD6, (i9 / 10U) & 0xFFU);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD7, (i12 / 10U) & 0xFFU);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD8, (i15 / 10U) & 0xFFU);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD9,
+                      (((i5 / 5U) >> 3) & 0xC0U) |
+                      (((i9 / 5U) >> 5) & 0x30U) |
+                      (((i12 / 5U) >> 7) & 0x0CU) |
+                      ((i15 / 5U) >> 9));
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD10, (i20 / 10U) & 0xFFU);
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PD11, SW6306_PD11_MSK | 0x03U,
+                      SW6306_PD11_CP_PPS0 | SW6306_PD11_CP_PPS1 |
+                      SW6306_PD11_CP_PPS2 | SW6306_PD11_CP_PPS3 |
+                      ((i20 / 5U) >> 9));
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PPS0, SW6306_PPS0_ENCP | (pps0 / 50U));
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PPS1, SW6306_PPS1_ENCP | (pps1 / 50U));
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PPS2, SW6306_PPS2_ENCP | (pps2 / 50U));
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PPS3, SW6306_PPS3_ENCP | (pps3 / 50U));
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_PD_CMD);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD_CMD, SW6306_PD_CMD_SRCCAP);
+    SW6306_FUNC_END;
+}
+
 static SW6306_RET SW6306_PDSet(SW6306_NOARG)
 {
     SW6306_FUNC_BEGIN;
-    //切换寄存器组
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_PD0);
-    //响应所有协议
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PD0, SW6306_PD0_MSK, 0x00);
-    //不给出PPS0/2（6V/16V组）（只能同时使能两组）
-    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PD1, SW6306_PD1_MSK, SW6306_PD1_NOPPS0|SW6306_PD1_NOPPS2);
-    //响应所有协议,PPS最低3.3V，手动设置电流
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD2, SW6306_PD2_PPS3V3|SW6306_PD2_FIXREGSET|SW6306_PD2_PPSREGSET|SW6306_PD2_REJECT);
-    //使能dr vconn swap
-    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PD3, SW6306_PD3_MSK, SW6306_PD3_ENDRSWAP|SW6306_PD3_ENVCONNSWAP);
-    //响应所有协议
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PD1, SW6306_PD1_MSK,
+                      SW6306_PD1_NOPPS0 | SW6306_PD1_NOPPS2);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD2,
+                      SW6306_PD2_PPS3V3 | SW6306_PD2_FIXREGSET |
+                      SW6306_PD2_PPSREGSET | SW6306_PD2_REJECT);
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PD3, SW6306_PD3_MSK,
+                      SW6306_PD3_ENDRSWAP | SW6306_PD3_ENVCONNSWAP);
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PD4, SW6306_PD4_MSK, 0x00);
-    //5V Fix低8位设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD5, (SW6306_PD_5V_FIX_CURR/10U)&0xFFU);
-    //9V Fix低8位设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD6, (SW6306_PD_9V_FIX_CURR/10U)&0xFFU);
-    //12V Fix低8位设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD7, (SW6306_PD_12V_FIX_CURR/10U)&0xFFU);
-    //15V Fix低8位设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD8, (SW6306_PD_15V_FIX_CURR/10U)&0xFFU);
-    //Fix高8位设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD9, (((SW6306_PD_5V_FIX_CURR/5)>>3)&0xC0)|(((SW6306_PD_9V_FIX_CURR/5)>>5)&0x30)|(((SW6306_PD_12V_FIX_CURR/5)>>7)&0x0C)|((SW6306_PD_15V_FIX_CURR/5)>>9));
-    //20V Fix低8位设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD10, (SW6306_PD_20V_FIX_CURR/10U)&0xFFU);
-    //20V Fix高2位设置，PPS支持恒功率
-    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_PD11, SW6306_PD11_MSK|0x03, SW6306_PD11_CP_PPS0|SW6306_PD11_CP_PPS1|SW6306_PD11_CP_PPS2|SW6306_PD11_CP_PPS3|((SW6306_PD_20V_FIX_CURR/5)>>9));
-    //PPS0电流设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PPS0, SW6306_PPS0_ENCP|(SW6306_PD_PPS0_CURR/50U));
-    //PPS1电流设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PPS1, SW6306_PPS1_ENCP|(SW6306_PD_PPS1_CURR/50U));
-    //PPS2电流设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PPS2, SW6306_PPS2_ENCP|(SW6306_PD_PPS2_CURR/50U));
-    //PPS3电流设置
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PPS3, SW6306_PPS3_ENCP|(SW6306_PD_PPS3_CURR/50U));
-    //切换寄存器组
-    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_PD_CMD);
-    //重新广播电流能力
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_PD_CMD, SW6306_PD_CMD_SRCCAP);
+    SW6306_SPAWN_NOARG(SW6306_PDCurrentSet);
+    SW6306_FUNC_END;
+}
+
+static SW6306_RET SW6306_UFCSCurrentSet(SW6306_NOARG)
+{
+    uint16_t i5  = sw6306_power_current_ma(s_pomax_target,  5000U, SW6306_UFCS_5V_MAX_MA,  50U, 0U);
+    uint16_t i10 = sw6306_power_current_ma(s_pomax_target, 10000U, SW6306_UFCS_10V_MAX_MA, 50U, 0U);
+    uint16_t i21 = sw6306_power_current_ma(s_pomax_target, 21000U, SW6306_UFCS_20V_MAX_MA, 50U, 1U);
+    SW6306_FUNC_BEGIN;
+
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_C_UFCS0);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_C_UFCS0, (i5  * 2U / 100U) & SW6306_UFCS_CURR_CODE_MSK);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_C_UFCS1, (i10 * 2U / 100U) & SW6306_UFCS_CURR_CODE_MSK);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_C_UFCS2, (i21 * 2U / 100U) & SW6306_UFCS_CURR_CODE_MSK);
+    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_UFCS_CMD);
+    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_UFCS_CMD, SW6306_UFCS_CMD_SRCCAP);
     SW6306_FUNC_END;
 }
 
 static SW6306_RET SW6306_UFCSSet(SW6306_NOARG)
 {
     SW6306_FUNC_BEGIN;
-    //切换寄存器组
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_P_UFCS);
-    //手动设置电流
-    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_P_UFCS, SW6306_P_UFCS_CURRSET_MAN, SW6306_P_UFCS_CURRSET_MAN);
-    //设置各挡位电流
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_C_UFCS0, (SW6306_UFCS_5V_MAX_MA*SW6306_UFCS_CURR_STEP_MA)&SW6306_UFCS_CURR_CODE_MSK);   /* 0x12E */
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_C_UFCS1, (SW6306_UFCS_10V_MAX_MA*SW6306_UFCS_CURR_STEP_MA)&SW6306_UFCS_CURR_CODE_MSK);  /* 0x12F */
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_C_UFCS2, (SW6306_UFCS_20V_MAX_MA*SW6306_UFCS_CURR_STEP_MA)&SW6306_UFCS_CURR_CODE_MSK);  /* 0x130 */
-    //切换寄存器组
-    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_UFCS_CMD);
-    //重新广播电流能力
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_UFCS_CMD, SW6306_UFCS_CMD_SRCCAP);
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_P_UFCS,
+                      SW6306_P_UFCS_CURRSET_MAN, SW6306_P_UFCS_CURRSET_MAN);
+    SW6306_SPAWN_NOARG(SW6306_UFCSCurrentSet);
     SW6306_FUNC_END;
 }
+
 
 SW6306_RET SW6306_Init(SW6306_NOARG)
 {
     SW6306_FUNC_BEGIN;
     SW6306_MUTEX_TAKE;
-    //切换寄存器组
-    SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_CLICK);
-    //触发一次短按键
-    SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_CLICK, SW6306_CLICK);
-    //解锁寄存器写入
+    //唤醒并解锁寄存器写入（Unlock_Nolock 内部已包含一次 CLICK）
     SW6306_SPAWN_NOARG(SW6306_Unlock_Nolock);
     //使能UVLO、充放电异常与场景变化中断（插拔/唤醒事件可经IRQ脚发脉冲唤醒MCU）
     //注意：硬件KEY引脚未引出，无需使能按键事件中断（SW6306_KEY_INT_EN）
@@ -1134,8 +1180,7 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_CHG_IBAT, (uint8_t)((float)SW6306_BAT_CHG_CURR_MAX * sw6306_batt_scale_set() / 100.0f + 0.5f));
     //输出功率设置（写入运行时目标，默认 SW6306_OUTPUT_POWER_MAX）
     SW6306_SPAWN_ARGS(SW6306_ByteWrite, SW6306_CTRG_POSET, s_pomax_target);
-    //输出功率设置
-    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_STRG_LEARN, SW6306_LEARN_END, 0x00);
+    //LEARN_END 由算法在消费 DONE 后 re-arm 时清除；Init 不得破坏历史完成状态。
     //切换寄存器组
     SW6306_SPAWN_ARGS(SW6306_RegsetSwitch, SW6306_CTRG_DCHG4);
     //禁止放电恒温环
@@ -1189,9 +1234,9 @@ SW6306_RET SW6306_Init(SW6306_NOARG)
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_P_DPDM5, SW6306_P_DPDM5_MSK, SW6306_P_DPDM5_VOOC|SW6306_P_DPDM5_SDP2A);
     //数码管驱动电流5mA,轻载5s后关闭输出
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_DISPLAY, SW6306_CTRG_DISPLAY_MSK, SW6306_CTRG_DISPLAY_2_5M);
-    //Rdc计算使能 + 无条件关闭容量学习（LEARNEN=0：data 只含 RDCEN，mask=0x90 覆盖 LEARNEN 位即清零；
-    //需要容量学习时由菜单/守护程序调 SW6306_CapacityLearningSet(1) 手动开启）
-    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_GAUGE0, SW6306_GAUGE0_MSK, SW6306_GAUGE0_RDCEN);
+    //Rdc计算 + 容量学习默认开启；只置LEARNEN，不在Init清LEARN_END。
+    SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_GAUGE0, SW6306_GAUGE0_MSK,
+                      SW6306_GAUGE0_RDCEN | SW6306_GAUGE0_LEARNEN);
     //短按键功能由寄存器决定
     SW6306_SPAWN_ARGS(SW6306_ByteModify, SW6306_CTRG_KEY0, SW6306_KEY0_MSK, SW6306_KEY0_REGSET);
     //短按键打开灯显与已经接入的输出口,长按关闭下游口,双击打开WLED

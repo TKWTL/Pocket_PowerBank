@@ -43,6 +43,9 @@ void menu_backlight_apply(void);
 void menu_auto_flip_set(uint8_t on);
 uint8_t menu_auto_flip_get(void);
 
+/* DeepSleep 唤醒后，超过该休眠时长则临时显示主界面；0=关闭。 */
+uint32_t menu_wake_home_after_sec(void);
+
 #ifdef __cplusplus
 }
 #endif

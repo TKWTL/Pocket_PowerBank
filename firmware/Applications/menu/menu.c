@@ -16,6 +16,7 @@
 static menu_state_t s_menu;
 static menu_redraw_cb_t s_redraw_cb;
 static const menu_app_t *s_app;   /* 当前激活应用（NULL=无/菜单态） */
+static uint8_t s_main_return_last; /* 长休眠唤醒临时主屏：MENU回休眠前菜单现场 */
 
 void menu_set_redraw_cb(menu_redraw_cb_t cb)
 {
@@ -79,6 +80,7 @@ static int16_t icon_head_center(uint8_t idx)
 
 void menu_open(void)
 {
+    s_main_return_last = 0U;
     if (s_menu.active && s_menu.page && s_menu.page->type == MENU_PAGE_WORD &&
         s_menu.page->word_mode == MENU_WORD_ACTION && s_menu.page->word_hook) {
         s_menu.page->word_hook(MENU_WORD_HOOK_EXIT);
@@ -114,8 +116,32 @@ void menu_open_last(void)
     s_menu.active  = true;
     if (s_menu.page->type == MENU_PAGE_ICON) {
         s_menu.page->head_x = icon_head_center(s_menu.index);
+    } else if (s_menu.page->type == MENU_PAGE_WORD &&
+               s_menu.page->word_mode == MENU_WORD_ACTION &&
+               s_menu.page->word_hook) {
+        /* menu_close()离开ACTION页时执行过EXIT；恢复现场时重新建立其后台hook。 */
+        s_menu.page->word_hook(MENU_WORD_HOOK_ENTER);
     }
     request_redraw();
+}
+
+void menu_show_main_locked(void)
+{
+    if (!s_menu.active) return;
+
+    /* menu_close()只关闭显示，不清page/stack/index，因此原菜单现场完整保留。 */
+    s_main_return_last = 1U;
+    menu_app_enter(&menu_app_main);
+}
+
+void menu_open_from_main(void)
+{
+    if (s_main_return_last != 0U) {
+        s_main_return_last = 0U;
+        menu_open_last();
+    } else {
+        menu_open();
+    }
 }
 
 /* ==================== 应用生命周期（固化在菜单系统） ====================
@@ -144,6 +170,7 @@ void menu_app_exit(void)
 {
     if (s_app && s_app->destroy) s_app->destroy();
     s_app = NULL;
+    s_main_return_last = 0U;
     ui_app_register(menu_app_main.run);
     menu_open_last();   /* 回到进入点菜单页 */
 }

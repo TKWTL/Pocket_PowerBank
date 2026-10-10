@@ -3,6 +3,9 @@
  */
 #include "sc7a20_algo.h"
 #include "sc7a20.h"
+#include "framework/pm_api.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 sc7a20_algo_config_t SC7A20_AlgoConfig = {
     0U, /* pickup_wake：默认关闭，保持现有最低休眠功耗 */
@@ -20,9 +23,12 @@ static uint8_t s_candidate_count;
 
 void SC7A20_AlgoInit(void)
 {
+    /* 也会在重力校准完成时由UI线程调用，因此与5Hz load_task 更新互斥。 */
+    taskENTER_CRITICAL();
     s_orientation = SC7A20_ORIENT_UNKNOWN;
     s_candidate = SC7A20_ORIENT_UNKNOWN;
     s_candidate_count = 0U;
+    taskEXIT_CRITICAL();
 }
 
 void SC7A20_AlgoUpdate(float x_mg)
@@ -85,7 +91,10 @@ void SC7A20_AlgoPmSuspend(void *ctx)
 {
     (void)ctx;
 
-    if (SC7A20_AlgoConfig.pickup_wake || SC7A20_AlgoConfig.motion_wake) {
+    if (pm_api_transport_mode_requested() != 0U) {
+        /* 运输模式覆盖Pickup/Motion策略：三轴与ODR全部关闭。 */
+        (void)SC7A20_LowPowerSet();
+    } else if (SC7A20_AlgoConfig.pickup_wake || SC7A20_AlgoConfig.motion_wake) {
         /* 正常运行时本来就是10Hz；若此前I2C故障把initialized清掉，则先尝试恢复。
          * Init失败时退回Power-down，至少保证共享INT线极性和休眠功耗处于安全状态。 */
         if (!SC7A20_IsInitialized()) {

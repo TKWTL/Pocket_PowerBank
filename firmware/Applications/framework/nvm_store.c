@@ -407,6 +407,21 @@ void nvm_set_sc7a20_z_slope_mg_per_lsb(float value)
     taskEXIT_CRITICAL();
 }
 
+void nvm_set_sc7a20_calibration(int16_t x_zero, float x_slope,
+                                int16_t y_zero, float y_slope,
+                                int16_t z_zero, float z_slope)
+{
+    taskENTER_CRITICAL();
+    nvm_data.sc7a20_x_zero_raw = x_zero;
+    nvm_data.sc7a20_x_slope_mg_per_lsb = x_slope;
+    nvm_data.sc7a20_y_zero_raw = y_zero;
+    nvm_data.sc7a20_y_slope_mg_per_lsb = y_slope;
+    nvm_data.sc7a20_z_zero_raw = z_zero;
+    nvm_data.sc7a20_z_slope_mg_per_lsb = z_slope;
+    s_nvm_dirty = 1U;
+    taskEXIT_CRITICAL();
+}
+
 uint8_t nvm_get_backup_charge_mode(void)
 {
     return nvm_data.backup_charge_mode;

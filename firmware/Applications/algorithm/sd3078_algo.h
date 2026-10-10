@@ -64,6 +64,9 @@ i2c_status_type SD3078_AlgoLoadFast(void);
 i2c_status_type SD3078_AlgoLoadSlow(void);
 i2c_status_type SD3078_AlgoLoadAll(void);
 
+/* PM：普通DeepSleep保持RTC策略不变；运输模式强制关闭后备充电与输出。 */
+void SD3078_AlgoPmSuspend(void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

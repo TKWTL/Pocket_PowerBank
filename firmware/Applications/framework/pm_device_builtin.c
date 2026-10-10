@@ -3,6 +3,7 @@
 #include "drivers.h"   /* GC9D01 */
 #include "algorithm/sw6306_algo.h"
 #include "algorithm/sc7a20_algo.h"
+#include "algorithm/sd3078_algo.h"
 
 static void pm_gc9d01_prepare(void *ctx)
 {
@@ -57,9 +58,19 @@ static const pm_device_node_t s_pm_sw6306 = {
     20
 };
 
+static const pm_device_node_t s_pm_sd3078 = {
+    "sd3078",
+    0,
+    SD3078_AlgoPmSuspend,
+    0,
+    0,
+    25
+};
+
 void pm_device_register_builtin(void)
 {
     pm_device_register(&s_pm_gc9d01);
     pm_device_register(&s_pm_sc7a20);
     pm_device_register(&s_pm_sw6306);
+    pm_device_register(&s_pm_sd3078);
 }

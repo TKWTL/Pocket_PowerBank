@@ -35,6 +35,9 @@ void main_screen_run(app_action_t action);
  * 由 menu.c 应用模型（menu_app_enter/exit）统一管理。 */
 void ui_app_register(void (*run)(app_action_t));
 
+/* 全屏工具可冻结180°自动翻转；lock=1强制正常方向，退出后恢复Auto Flip策略。 */
+void ui_orientation_lock_set(uint8_t lock);
+
 /* ---------- 一次性动作函数（MENU_ITEM_ACTION_ 调用） ---------- */
 void action_reset_now(menu_item_t *it);   /* WORD_CONFIRM：请求恢复用户设置并复位 */
 void action_reset_process(void);            /* load_task：NVM成功落盘后真正复位 */

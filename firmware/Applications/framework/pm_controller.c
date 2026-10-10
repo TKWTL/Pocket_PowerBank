@@ -24,6 +24,13 @@ static void pm_handle_transition(pm_power_state_t from, pm_power_state_t to)
         pm_device_suspend_all();
     }
 
+    /* 显式Standby（运输模式）可能从RUN直接进入：同样先关视觉输出并挂起全部设备。
+     * Standby唤醒等同复位，因此不需要对应resume。 */
+    if (to == PM_STATE_STANDBY && from != PM_STATE_STANDBY) {
+        pm_device_prepare_all();
+        pm_device_suspend_all();
+    }
+
     /* 任何路径进入 RUN → 恢复外设 */
     if (to == PM_STATE_RUN && from != PM_STATE_RUN) {
         pm_device_resume_all();

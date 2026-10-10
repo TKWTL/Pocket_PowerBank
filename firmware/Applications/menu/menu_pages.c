@@ -72,14 +72,16 @@ static const menu_tr_t menu_tr_table[] = {
     { "Leveler", "水平仪" },
     { "SOS Blink", "SOS 闪灯" },
     { "Screen Test", "屏幕测试" },
-    { "Accelerator Calibrate", "加速度计校准" },
     { "Emergency Light", "紧急闪灯" },
     { "Function Not Ready", "功能尚未完成" },
     { "Cycles Solid Colors", "循环显示纯色" },
     { "Check Pixel Defects", "检查坏点" },
-    { "Accel Calibrate", "加速度计校准" },
-    { "Place Device Level", "将设备水平放置" },
-    { "Keep Device Still", "保持设备静止" },
+    { "Gravity Calibrate", "重力校准" },
+    { "Auto Detect 6 Sides", "自动识别六个方向" },
+    { "Hold Each Side 2 sec", "每个方向静置 2 秒" },
+    { "UP/DOWN/LEFT/RIGHT", "上/下/左/右依次校准" },
+    { "Then Face Up/Down", "再将屏幕朝上/朝下" },
+    { "Any Key Exits Test", "中途任意键退出" },
     { "Press NEXT to Exit", "按 NEXT 退出" },
     { "Press CONF to Exit", "按 CONF 退出" },
     { "Press CONF to Start", "按 CONF 开始" },
@@ -123,7 +125,11 @@ static const menu_tr_t menu_tr_table[] = {
     { "None", "不休眠" },
     { "Pickup Wake", "抬起唤醒" },
     { "Motion Wake", "运动唤醒" },
-    { "Auto return Homepage", "自动回主界面" },
+    { "Wake Home After", "唤醒回主页" },
+    { "1 min", "1 分钟" },
+    { "5 min", "5 分钟" },
+    { "15 min", "15 分钟" },
+    { "30 min", "30 分钟" },
     /* ---- System 页 ---- */
     { "Clock", "时钟" },
     /* Clock 子页的页面标题仍是 "Time"（菜单项标签改叫 Clock，页面标题未改） */
@@ -138,8 +144,11 @@ static const menu_tr_t menu_tr_table[] = {
     { "Unlocked", "已解锁" },
     { "Wrong Password", "密码错误" },
     { "Transport Mode", "运输模式" },
-    { "Outputs Power Off", "关闭全部输出" },
-    { "For Storage/Ship", "用于存储与运输" },
+    { "Minimum Power State", "最低功耗状态" },
+    { "Wake: Press PWR/NEXT", "按 PWR/NEXT 唤醒" },
+    { "System Will Reset", "系统将复位" },
+    { "Runtime Settings Lost", "运行时设置会丢失" },
+    { "Press CONF to Enter", "按 CONF 进入" },
     { "Reset", "复位" },
     /* System → Clock（原 Settings→Time：SD3078 时间设置 + 后备电池充电） */
     { "Sec", "秒" },
@@ -229,6 +238,7 @@ static uint8_t s_theme_toggle = 0;          /* 0=深色 1=浅色 */
 static int32_t s_theme_color_idx = 0;       /* 主题色在色板中的下标 */
 static int32_t s_backlight = 8;             /* 背光亮度 1~16，默认 8 */
 static int32_t s_sleep_idx = 4;             /* 自动休眠：ENUM 选项下标（默认 30s），0=不休眠 */
+static int32_t s_wake_home_idx = 2;         /* 唤醒回主页：默认 DeepSleep >=5min */
 /* 自动翻转开关：ON=按重力方向自动 180° 翻转；OFF=固定方向（画面永远正立，默认）。
  * 与背光一样是运行时设置，未持久化。 */
 static uint8_t s_auto_flip = 0;
@@ -250,6 +260,20 @@ static const char * const s_sleep_opts[] = {
 };
 /* 与 s_sleep_opts 一一对应：实际超时秒数（0=永久不休眠） */
 static const int s_sleep_opts_sec[] = { 0, 5, 10, 15, 30, 60, 120, 300, 600 };
+
+static const char * const s_wake_home_opts[] = {
+    "Off", "1 min", "5 min", "15 min", "30 min",
+};
+static const uint16_t s_wake_home_sec[] = { 0U, 60U, 300U, 900U, 1800U };
+
+uint32_t menu_wake_home_after_sec(void)
+{
+    if (s_wake_home_idx < 0 ||
+        s_wake_home_idx >= (int32_t)(sizeof(s_wake_home_sec) / sizeof(s_wake_home_sec[0]))) {
+        return 0U;
+    }
+    return s_wake_home_sec[s_wake_home_idx];
+}
 
 /* 自动休眠：合并开关+超时为单个枚举，选择即生效（0=No Sleep 永久不休眠） */
 static void sleep_apply(menu_item_t *it)
@@ -341,15 +365,14 @@ static const menu_item_t menu_items_display[] = {
 MENU_PAGE_("Display", menu_page_display, menu_items_display);
 
 /* ==================== 休眠与唤醒页（Sleep & Wake，三级） ====================
- * Pickup/Motion Wake 先接入二值RAM开关：任一开启时DeepSleep保留SC7A20 10Hz，
- * 两者都关闭时SC7A20进入Power-down。具体阈值和INT使能后续再接。
- * Auto return Homepage 仍为占位功能。 */
+ * Pickup/Motion Wake 仍控制DeepSleep时SC7A20是否保留10Hz；
+ * Wake Home After控制一次DeepSleep持续多久后，唤醒先显示主屏而保留原菜单现场。 */
 static const menu_item_t menu_items_sleep_wake[] = {
     MENU_ITEM_BACK_("Return"),
     MENU_ITEM_ENUM_("Auto Sleep", &s_sleep_idx, s_sleep_opts, 9, sleep_apply),
     MENU_ITEM_TOGGLE_("Pickup Wake", &SC7A20_AlgoConfig.pickup_wake, "On", "Off", NULL),
     MENU_ITEM_TOGGLE_("Motion Wake", &SC7A20_AlgoConfig.motion_wake, "On", "Off", NULL),
-    MENU_ITEM_ACTION_("Auto return Homepage", placeholder_apply), /* TODO: 未实现 */
+    MENU_ITEM_ENUM_("Wake Home After", &s_wake_home_idx, s_wake_home_opts, 5, NULL),
 };
 MENU_PAGE_("Sleep & Wake", menu_page_sleep_wake, menu_items_sleep_wake);
 
@@ -612,14 +635,22 @@ static void factory_option_apply(menu_item_t *it)
     s_factory_unlocked = 0U;   /* 授权只允许进入一次，进入后立即清除 */
 }
 
+static void transport_mode_apply(menu_item_t *it)
+{
+    (void)it;
+    pm_api_enter_transport_mode();
+}
+
 static const char * const word_transport[] = {
     "Transport Mode",
-    "Outputs Power Off",
-    "For Storage/Ship",
+    "Minimum Power State",
+    "Wake: Press PWR/NEXT",
+    "System Will Reset",
+    "Runtime Settings Lost",
     "Press NEXT to Exit",
-    "Press CONF to Exit",
+    "Press CONF to Enter",
 };
-MENU_WORD_CONFIRM_(menu_page_transport, word_transport, NULL);
+MENU_WORD_CONFIRM_(menu_page_transport, word_transport, transport_mode_apply);
 
 static const menu_item_t menu_items_system[] = {
     MENU_ITEM_BACK_("Return"),
@@ -809,21 +840,30 @@ static const char * const word_screen_test[] = {
 };
 MENU_WORD_CONFIRM_(menu_page_screen_test_confirm, word_screen_test, screen_test_confirm_apply);
 
+static void gravity_calibrate_apply(menu_item_t *it)
+{
+    (void)it;
+    menu_app_enter(&menu_app_gravity_calibrate);
+}
+
 static const char * const word_accel_calibrate[] = {
-    "Accel Calibrate",
-    "Place Device Level",
-    "Keep Device Still",
+    "Gravity Calibrate",
+    "Auto Detect 6 Sides",
+    "Hold Each Side 2 sec",
+    "UP/DOWN/LEFT/RIGHT",
+    "Then Face Up/Down",
+    "Any Key Exits Test",
     "Press NEXT to Exit",
-    "Press CONF to Exit",
+    "Press CONF to Start",
 };
-MENU_WORD_CONFIRM_(menu_page_accel_calibrate, word_accel_calibrate, NULL);
+MENU_WORD_CONFIRM_(menu_page_accel_calibrate, word_accel_calibrate, gravity_calibrate_apply);
 
 static const menu_item_t menu_items_tools[] = {
     MENU_ITEM_BACK_("Return"),
     MENU_ITEM_ACTION_("Leveler", placeholder_apply),
     MENU_ITEM_PAGE_("SOS Blink", &menu_page_sos),
     MENU_ITEM_PAGE_("Screen Test", &menu_page_screen_test_confirm),
-    MENU_ITEM_PAGE_("Accelerator Calibrate", &menu_page_accel_calibrate),
+    MENU_ITEM_PAGE_("Gravity Calibrate", &menu_page_accel_calibrate),
 };
 MENU_PAGE_("Tools", menu_page_tools, menu_items_tools);
 

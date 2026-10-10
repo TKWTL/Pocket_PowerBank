@@ -11,12 +11,14 @@ pm_power_state_t pm_policy_next_state(pm_power_state_t current, const pm_policy_
         return PM_STATE_RUN;
     }
 
-    if (in->wake_event != 0) {
-        return PM_STATE_RUN;
+    /* 显式运输/强制Standby是用户确认后的最高优先级动作，不受普通自动休眠深度上限限制，
+     * 也不允许确认动作本身留下的wake_latched把它拉回RUN。 */
+    if (in->force_standby != 0U) {
+        return PM_STATE_STANDBY;
     }
 
-    if (in->force_standby != 0 && pm_allow_depth(PM_SLEEP_DEPTH_STANDBY) != 0) {
-        return PM_STATE_STANDBY;
+    if (in->wake_event != 0U) {
+        return PM_STATE_RUN;
     }
 
     if (in->low_battery != 0 && in->usb_or_dc_attached == 0 && pm_allow_depth(PM_SLEEP_DEPTH_STANDBY) != 0) {

@@ -2783,6 +2783,11 @@
               <FileType>1</FileType>
               <FilePath>..\..\Applications\functions\screen_test.c</FilePath>
             </File>
+            <File>
+              <FileName>gravity_calibrate.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Applications\functions\gravity_calibrate.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

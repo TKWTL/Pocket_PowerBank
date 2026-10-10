@@ -195,6 +195,15 @@ int16_t SC7A20_ReadZ(void)//读取Z轴原始数据
     return SC7A20_Status.z;
 }
 
+void SC7A20_ReadRawCode(int16_t *x, int16_t *y, int16_t *z)
+{
+    uint8_t hr = (SC7A20_Status.ctrl4 & SC7A20_CTRL4_HR) ? 1U : 0U;
+
+    if (x) *x = sc7a20_raw_to_axis(SC7A20_Status.x, hr);
+    if (y) *y = sc7a20_raw_to_axis(SC7A20_Status.y, hr);
+    if (z) *z = sc7a20_raw_to_axis(SC7A20_Status.z, hr);
+}
+
 /*读取X轴加速度（单位：mg）
 /原始数据左对齐补码 → 右对齐到有效位 → int16零点修正 → float斜率
 */

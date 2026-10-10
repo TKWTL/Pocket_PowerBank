@@ -414,9 +414,9 @@ void main_screen_run(app_action_t action)
     static uint8_t s_dim_div = 0;        /* 每 8 次长按重复发一个 ±1 档请求 */
 
     switch (action) {
-    case APP_ACTION_UP:      /* MENU 键：打开菜单（主界面销毁释放内存） */
+    case APP_ACTION_UP:      /* MENU/PREV：普通主屏开根菜单；锁屏主屏回休眠前页面 */
         main_screen_destroy();
-        menu_open();
+        menu_open_from_main();
         break;
     case APP_ACTION_ENTER_DBL:   /* CONF 双击：只提交 WLED 开关请求 */
         WLED_AlgoRequestToggle();

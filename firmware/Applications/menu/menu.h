@@ -178,6 +178,8 @@ void menu_init(void);
 bool menu_is_active(void);
 void menu_open(void);
 void menu_open_last(void);   /* 恢复到菜单关闭前的页面（功能界面退出后回到原菜单页） */
+void menu_show_main_locked(void); /* 长时间休眠唤醒：临时显示主屏，保留菜单现场 */
+void menu_open_from_main(void);   /* 主屏MENU：锁屏态回原页面，否则打开根菜单 */
 void menu_close(void);
 void menu_enter_page(menu_page_t *pg); /* 动作回调动态进入页面（Factory gate等） */
 void menu_process(void);                /* 每个UI循环执行WORD_ACTION hook */
@@ -215,8 +217,9 @@ struct menu_app_t {
 };
 
 /* 内置应用（定义在各自 functions 目录的 .c 文件中） */
-extern const menu_app_t menu_app_main;        /* 主界面（待机信息屏） */
-extern const menu_app_t menu_app_screen_test; /* 屏幕测试 */
+extern const menu_app_t menu_app_main;              /* 主界面（待机信息屏） */
+extern const menu_app_t menu_app_screen_test;       /* 屏幕测试 */
+extern const menu_app_t menu_app_gravity_calibrate; /* 六面重力校准 */
 
 /* 应用生命周期（固化在菜单系统）：
  * enter：先 create→注册 run→menu_close(记录进入点)→redraw 触发 activate
@@ -247,7 +250,7 @@ void menu_page_set_head_x(int16_t x);
 /* ==================== 国际化（i18n） ====================
  * 菜单文案采用“英文文本即键”策略：menu_pages.c 里的 label/title/toggle 值
  * 保持英文（同时就是字符串键），menu_tr(key) 按当前语言返回显示文本：
- *  - 英文态直接查表返回 en（en 即 key 的英文）；
+ *  - 英文态直接返回 key，不查表；
  *  - 中文态查表返回 zh，未配置的键回退 key 本身。
  * 中文字库（14/12px 部分字符集）待全部文案确认后生成，生成前切中文缺字形。 */
 typedef struct {

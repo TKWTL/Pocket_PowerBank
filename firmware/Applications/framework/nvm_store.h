@@ -87,6 +87,9 @@ int16_t nvm_get_sc7a20_z_zero_raw(void);
 void nvm_set_sc7a20_z_zero_raw(int16_t value);
 float nvm_get_sc7a20_z_slope_mg_per_lsb(void);
 void nvm_set_sc7a20_z_slope_mg_per_lsb(float value);
+void nvm_set_sc7a20_calibration(int16_t x_zero, float x_slope,
+                                int16_t y_zero, float y_slope,
+                                int16_t z_zero, float z_slope);
 uint8_t nvm_get_backup_charge_mode(void);
 void nvm_set_backup_charge_mode(uint8_t mode);
 

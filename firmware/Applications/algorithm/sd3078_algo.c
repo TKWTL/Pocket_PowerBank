@@ -3,6 +3,7 @@
  */
 #include "sd3078_algo.h"
 #include "framework/nvm_store.h"
+#include "framework/pm_api.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -303,5 +304,32 @@ i2c_status_type SD3078_AlgoProcessFast(void)
     }
     return I2C_OK;
 }
+
+/***************************** SD3078 低功耗策略 *****************************/
+void SD3078_AlgoPmSuspend(void *ctx)
+{
+    i2c_status_type st;
+    (void)ctx;
+
+    if (pm_api_transport_mode_requested() == 0U) return;
+
+    /* 运输模式：RTC继续走时，但关闭所有本项目会用到的可选耗电功能。
+     * Standby唤醒会复位MCU，故无需恢复；正常DeepSleep不走这里的强制关闭。 */
+    st = SD3078_Unlock();
+    if (st == I2C_OK) {
+        (void)SD3078_ChargeSet(0U, SD3078_ALGO_CHARGE_RES_SEL);
+        (void)SD3078_F32KSet(0U);
+        (void)SD3078_CountdownEnable(0U);
+        (void)SD3078_ByteModify(SD3078_CTRG_CTR2,
+                                SD3078_CTR2_INTFE | SD3078_CTR2_INTAE |
+                                SD3078_CTR2_INTDE | SD3078_CTR2_FOBAT, 0U);
+        (void)SD3078_ByteModify(SD3078_CTRG_CTR4,
+                                SD3078_CTR4_INTTHE | SD3078_CTR4_INTTLE |
+                                SD3078_CTR4_INTBHE | SD3078_CTR4_INTBLE, 0U);
+        (void)SD3078_Lock();
+    }
+    s_algo.backup_charging = 0U;
+}
+/*************************** SD3078 低功耗策略结束 ***************************/
 
 /************************** SD3078 算法接口与调度结束 ***************************/

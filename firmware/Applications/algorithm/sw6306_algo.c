@@ -7,6 +7,7 @@
 #include "sw6306_algo.h"
 #include "sw6306.h"
 #include "framework/nvm_store.h"
+#include "framework/pm_api.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -454,7 +455,14 @@ uint8_t SW6306_AlgoDischargeSessionActive(void)
 void SW6306_AlgoPmSuspend(void *ctx)
 {
     (void)ctx;
-    SW6306_LPSet();
+
+    if (pm_api_transport_mode_requested() != 0U) {
+        /* 运输模式不保留任何输出/充放电活动：先强制关闭端口，再进入芯片最低功耗。 */
+        SW6306_ForceOff();
+        SW6306_LPSet();
+    } else {
+        SW6306_LPSet();
+    }
 }
 
 void SW6306_AlgoPmResume(void *ctx)

@@ -8,6 +8,10 @@ static pm_controller_t s_pm_ctrl;
 static uint8_t s_pm_ready;
 static volatile uint8_t s_pm_refresh_req;
 static volatile uint8_t s_pm_block_mask;
+static volatile uint8_t s_transport_req;
+static volatile uint32_t s_last_sleep_seconds;
+static uint32_t s_sleep_rtc_stamp;
+static uint8_t s_sleep_rtc_valid;
 
 /* 数据刷新请求（EXINT 置位，load_task 消费）与唤醒数据就绪门闩 */
 static volatile uint8_t s_data_refresh_req;
@@ -21,7 +25,26 @@ static uint8_t s_wk_btn;
 
 void pm_api_refresh_idle(void)
 {
-    s_pm_refresh_req = 1;
+    if (s_transport_req == 0U) s_pm_refresh_req = 1U;
+}
+
+void pm_api_enter_transport_mode(void)
+{
+    taskENTER_CRITICAL();
+    s_transport_req = 1U;
+    s_pm_refresh_req = 0U;
+    s_pm_block_mask = 0U;
+    taskEXIT_CRITICAL();
+}
+
+uint8_t pm_api_transport_mode_requested(void)
+{
+    return s_transport_req;
+}
+
+uint32_t pm_api_get_last_sleep_seconds(void)
+{
+    return s_last_sleep_seconds;
 }
 
 void pm_api_force_sleep(void)
@@ -47,7 +70,9 @@ void pm_api_set_sleep_timeout(int timeout_sec)
 
 void pm_api_set_sleep_block(uint8_t mask, uint8_t enable)
 {
-    if (enable != 0) {
+    if (s_transport_req != 0U && enable != 0U) return;
+
+    if (enable != 0U) {
         s_pm_block_mask |= mask;
     } else {
         s_pm_block_mask &= (uint8_t)(~mask);
@@ -57,7 +82,9 @@ void pm_api_set_sleep_block(uint8_t mask, uint8_t enable)
 uint8_t pm_api_ui_should_block(void)
 {
     /* UI 阻塞：非 RUN 状态，或唤醒后数据尚未预取就绪（先查后显，避免旧值闪现） */
-    return pm_controller_is_ui_blocked(&s_pm_ctrl) || (s_wake_data_ready == 0);
+    return (s_transport_req != 0U) ||
+           pm_controller_is_ui_blocked(&s_pm_ctrl) ||
+           (s_wake_data_ready == 0U);
 }
 
 uint8_t pm_api_is_sleeping(void)
@@ -119,6 +146,35 @@ uint8_t pm_api_sleep_gate_get(void)
     return s_pm_sleep_gate;
 }
 
+static uint8_t pm_rtc_stamp_seconds(uint32_t *stamp)
+{
+    static const uint8_t mdays[12] = { 31U,28U,31U,30U,31U,30U,31U,31U,30U,31U,30U,31U };
+    uint32_t days;
+    uint8_t y, m, d, hh, mm, ss, i;
+
+    if (!stamp || SD3078_TimeLoad() != I2C_OK) return 0U;
+
+    y = SD3078_ReadYear();
+    m = SD3078_ReadMonth();
+    d = SD3078_ReadDay();
+    hh = SD3078_ReadHour();
+    mm = SD3078_ReadMin();
+    ss = SD3078_ReadSec();
+    if (m < 1U || m > 12U || d < 1U || d > 31U ||
+        hh > 23U || mm > 59U || ss > 59U) return 0U;
+
+    /* 2000..2099：00年为闰年；uint32秒数可覆盖整个本RTC使用范围。 */
+    days = (uint32_t)y * 365UL + (uint32_t)(y + 3U) / 4UL;
+    for (i = 1U; i < m; i++) {
+        days += mdays[i - 1U];
+        if (i == 2U && (y & 3U) == 0U) days++;
+    }
+    days += (uint32_t)(d - 1U);
+    *stamp = days * 86400UL + (uint32_t)hh * 3600UL +
+             (uint32_t)mm * 60UL + ss;
+    return 1U;
+}
+
 /* 所有总线互斥锁空闲？（非阻塞获取成功即空闲，获取后立即释放，不改变状态） */
 uint8_t pm_api_bus_locks_idle(void)
 {
@@ -151,6 +207,11 @@ static void pm_enter_deep_sleep(void)
             wait += 10U;
         }
     }
+
+    /* 用SD3078记录实际休眠起点；唤醒后用同一RTC算DeepSleep经过时长。
+     * RTC无效时保持0，不触发“唤醒回主页”。 */
+    s_last_sleep_seconds = 0U;
+    s_sleep_rtc_valid = pm_rtc_stamp_seconds(&s_sleep_rtc_stamp);
 
     /* ① 睡眠总线门控：置位 → load/SW6306 任务停止发起新总线读写（下一轮让出） */
     pm_api_sleep_gate_set(1);
@@ -260,6 +321,14 @@ static void pm_enter_deep_sleep(void)
     crm_periph_clock_enable(CRM_USART1_PERIPH_CLOCK, TRUE);
     crm_periph_clock_enable(CRM_I2C1_PERIPH_CLOCK, TRUE);
 
+    /* 恢复I2C时钟后立即读取RTC，计算真正DeepSleep持续时间。 */
+    if (s_sleep_rtc_valid != 0U) {
+        uint32_t wake_stamp;
+        if (pm_rtc_stamp_seconds(&wake_stamp) != 0U && wake_stamp >= s_sleep_rtc_stamp) {
+            s_last_sleep_seconds = wake_stamp - s_sleep_rtc_stamp;
+        }
+    }
+
     /* 唤醒数据预取门：置数据未就绪 → ui_task 保持阻塞，
      * 直到 load_task 检测到刷新请求完成一轮完整读取（先查后显） */
     pm_api_mark_wake_data_stale();
@@ -274,8 +343,55 @@ static void pm_enter_deep_sleep(void)
 
 static void pm_enter_standby(void)
 {
-    pwc_wakeup_pin_enable(PWC_WAKEUP_PIN_1, TRUE);
+    gpio_init_type gpio_init_struct;
+    uint16_t wait = 0U;
+
+    /* 运输模式仍先给NVM最多600ms落盘；Standby唤醒等同复位，SRAM运行时设置会丢失。 */
+    while (nvm_is_dirty() != 0U && wait < 600U) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        wait += 10U;
+    }
+
+    pm_api_sleep_gate_set(1U);
+    wait = 0U;
+    while (pm_api_bus_locks_idle() == 0U && wait < 1000U) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+        wait += 5U;
+    }
+
+    vTaskSuspendAll();
+
+    /* WLED硬件直接归零。PB0保持低电平输出且无上下拉，避免PWM输入悬空；
+     * PB1(CONF)不再作为唤醒源，切到Analog/no-pull降低输入与上拉静态电流。 */
+    WLED_SetPwm(0U);
+    gpio_bits_reset(GPIOB, GPIO_PINS_0);
+    gpio_default_para_init(&gpio_init_struct);
+    gpio_init_struct.gpio_drive_strength = GPIO_DRIVE_STRENGTH_MODERATE;
+    gpio_init_struct.gpio_out_type = GPIO_OUTPUT_PUSH_PULL;
+    gpio_init_struct.gpio_mode = GPIO_MODE_OUTPUT;
+    gpio_init_struct.gpio_pins = GPIO_PINS_0;
+    gpio_init_struct.gpio_pull = GPIO_PULL_NONE;
+    gpio_init(GPIOB, &gpio_init_struct);
+
+    gpio_default_para_init(&gpio_init_struct);
+    gpio_init_struct.gpio_mode = GPIO_MODE_ANALOG;
+    gpio_init_struct.gpio_pins = GPIO_PINS_1;
+    gpio_init_struct.gpio_pull = GPIO_PULL_NONE;
+    gpio_init(GPIOB, &gpio_init_struct);
+
+    /* 唯一Standby唤醒源：PA0 = NEXT/PWR = WKUP1，按键拉高唤醒。
+     * 显式关闭其它WKUP，避免外部事件把运输模式误唤醒。 */
+    gpio_default_para_init(&gpio_init_struct);
+    gpio_init_struct.gpio_mode = GPIO_MODE_INPUT;
+    gpio_init_struct.gpio_pins = GPIO_PINS_0;
+    gpio_init_struct.gpio_pull = GPIO_PULL_DOWN;
+    gpio_init(GPIOA, &gpio_init_struct);
+
+    pwc_wakeup_pin_enable(PWC_WAKEUP_PIN_2, FALSE);
+    pwc_wakeup_pin_enable(PWC_WAKEUP_PIN_6, FALSE);
+    pwc_wakeup_pin_enable(PWC_WAKEUP_PIN_7, FALSE);
     pwc_flag_clear(PWC_WAKEUP_FLAG | PWC_STANDBY_FLAG);
+    pwc_wakeup_pin_enable(PWC_WAKEUP_PIN_1, TRUE);
     pwc_standby_mode_enter();
 }
 
@@ -301,18 +417,25 @@ void powerdown_task_func(void *pvParameters)
     pm_task_init_once();
 
     while (1) {
-        if (s_pm_refresh_req != 0) {
+        if (s_transport_req != 0U) {
+            /* 显式运输请求优先于所有常亮/活动条件，不允许负载重新阻止Standby。 */
+            s_pm_refresh_req = 0U;
+            s_pm_block_mask = 0U;
+            sleep_blocked = 0U;
+            pm_controller_force_standby(&s_pm_ctrl, 1U);
+            pm_controller_mark_ui_active(&s_pm_ctrl, 0U);
+        } else if (s_pm_refresh_req != 0U) {
             pm_controller_refresh_idle(&s_pm_ctrl);
-            s_pm_refresh_req = 0;
+            s_pm_refresh_req = 0U;
         }
 
-        if (s_pm_block_mask != 0) {
+        if (s_transport_req == 0U && s_pm_block_mask != 0U) {
             if (sleep_blocked == 0) {
                 pm_controller_pause_idle(&s_pm_ctrl);
                 sleep_blocked = 1;
             }
             pm_controller_notify_wake(&s_pm_ctrl);
-        } else if (sleep_blocked != 0) {
+        } else if (s_transport_req == 0U && sleep_blocked != 0U) {
             pm_controller_resume_idle(&s_pm_ctrl);
             sleep_blocked = 0;
         }
@@ -335,6 +458,9 @@ void powerdown_task_func(void *pvParameters)
             vTaskDelay(pdMS_TO_TICKS(50));
             break;
         case PM_STATE_UI_OFF:
+            /* 新一轮熄屏周期尚未真正进入DeepSleep，先清掉上一轮的RTC睡眠时长。
+             * 若在UI_OFF/SLEEP_PREPARE阶段就被唤醒，锁屏逻辑因此不会误用旧值。 */
+            s_last_sleep_seconds = 0U;
             vTaskDelay(pdMS_TO_TICKS(100));
             break;
         case PM_STATE_SLEEP_PREPARE:

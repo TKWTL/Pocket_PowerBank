@@ -387,6 +387,7 @@ SC7A20_RET SC7A20_AccelLoad(SC7A20_NOARG);    //读取三轴原始数据镜像�
 int16_t SC7A20_ReadX(void);                    //读取X轴原始数据
 int16_t SC7A20_ReadY(void);                    //读取Y轴原始数据
 int16_t SC7A20_ReadZ(void);                    //读取Z轴原始数据
+void SC7A20_ReadRawCode(int16_t *x, int16_t *y, int16_t *z); //读取右对齐、未校准的三轴码
 float SC7A20_ReadX_mg(void);                   //读取X轴加速度（单位：mg，应用零点+斜率校准）
 float SC7A20_ReadY_mg(void);                   //读取Y轴加速度（单位：mg，应用零点+斜率校准）
 float SC7A20_ReadZ_mg(void);                   //读取Z轴加速度（单位：mg，应用零点+斜率校准）

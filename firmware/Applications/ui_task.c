@@ -10,6 +10,9 @@
 #include "functions.h"   /* 主界面创建/显示 + 一次性动作函数 */
 
 static lv_obj_t *s_menu_scr;   /* 菜单屏（主界面/应用屏由菜单应用模型统一管理） */
+static uint8_t s_orientation_lock;
+static uint8_t s_rotate_applied_valid;
+static uint8_t s_rotate_applied_flipped;
 
 /* 500ms UI 数据刷新：
  *  - Time 设置页非编辑态：持续从 SD3078 镜像同步年月日时分秒，秒数正常走动；
@@ -66,28 +69,40 @@ static void menu_redraw_handler(void)
  * Auto Flip（Settings→Display→Auto Flip）默认 ON：跟随重力自动翻转；
  * 关掉则固定方向（画面永远正立，不随摆放转动）。
  * 方向未知时保持上一次的旋转，避免上电瞬间闪一下。 */
+void ui_orientation_lock_set(uint8_t lock)
+{
+    s_orientation_lock = (lock != 0U) ? 1U : 0U;
+    s_rotate_applied_valid = 0U;
+
+    if (s_orientation_lock != 0U) {
+        /* 校准/水平仪等方向敏感工具统一固定为正常方向。 */
+        GC9D01_rotation(1U);
+        s_rotate_applied_flipped = 0U;
+        s_rotate_applied_valid = 1U;
+        lv_obj_invalidate(lv_screen_active());
+    }
+}
+
 static void ui_auto_rotate(void)
 {
-    static uint8_t applied_valid = 0;
-    static uint8_t applied_flipped = 0;
-    sc7a20_orientation_t orientation = SC7A20_AlgoGetOrientation();
+    sc7a20_orientation_t orientation;
     uint8_t flipped;
 
-    if (orientation == SC7A20_ORIENT_UNKNOWN) {
-        return;
-    }
+    if (s_orientation_lock != 0U) return;
+
+    orientation = SC7A20_AlgoGetOrientation();
+    if (orientation == SC7A20_ORIENT_UNKNOWN) return;
+
     /* 只有开关为 ON 时才跟随重力；OFF 时恒为正立方向 */
     flipped = (uint8_t)((menu_auto_flip_get() != 0U) &&
                         (orientation == SC7A20_ORIENT_FLIPPED));
 
-    if (applied_valid && flipped == applied_flipped) {
-        return;
-    }
+    if (s_rotate_applied_valid != 0U && flipped == s_rotate_applied_flipped) return;
 
     /* GC9D01 的 1/3 模式均保持 160x40（横竖分辨率不变，只翻转 180°） */
     GC9D01_rotation(flipped ? 3U : 1U);
-    applied_flipped = flipped;
-    applied_valid = 1U;
+    s_rotate_applied_flipped = flipped;
+    s_rotate_applied_valid = 1U;
     lv_obj_invalidate(lv_screen_active());
 }
 
@@ -125,7 +140,8 @@ static app_action_t ui_scan_action(void)
      * 只在"当前画面确实倒着"时换 —— 关闭 Auto Flip 时固定正立，无需互换。
      * 应用态（主界面等）的 MENU/NEXT 语义是 HOME/LED，与屏幕方向无关，一律不换。 */
     if (menu_is_active()) {
-        uint8_t flip = (menu_auto_flip_get() != 0U) &&
+        uint8_t flip = (s_orientation_lock == 0U) &&
+                       (menu_auto_flip_get() != 0U) &&
                        (SC7A20_AlgoGetOrientation() == SC7A20_ORIENT_FLIPPED);
         if (KEY_GetDASClick(KeyIndex_MENU)) {
             KEY_ClearEdge(KeyIndex_MENU);
@@ -217,9 +233,17 @@ void ui_task_func(void *pvParameters)
             woke = 1;
         }
 
-        if (woke != 0) {
-            /* 唤醒恢复：数据已预取就绪，先绘出新图（LVGL 重绘新镜像），再亮屏，
-             * 避免休眠前旧值闪现（亮屏优先级让位于数据读取）。 */
+        if (woke != 0U) {
+            uint32_t wake_home_sec = menu_wake_home_after_sec();
+
+            /* 长时间DeepSleep后表现成“锁屏”：仅临时显示主屏，不清原菜单的
+             * page/stack/index；用户按MENU/PREV即可回到睡前页面。 */
+            if (menu_is_active() && wake_home_sec != 0U &&
+                pm_api_get_last_sleep_seconds() >= wake_home_sec) {
+                menu_show_main_locked();
+            }
+
+            /* 唤醒恢复：数据已预取就绪，先绘出新图，再恢复背光。 */
             lv_timer_handler();
             menu_backlight_apply();
             continue;
